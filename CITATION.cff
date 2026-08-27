@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this simulation benchmark, please cite it as follows."
+title: "Signals Project: Executed Blind De-Mixing With a Joint Torus-Valued State-Space Model"
+type: software
+authors:
+  - family-names: "Morelli"
+    given-names: "Salem"
+year: 2026
+version: 2.0.0
+license: MIT
+repository-code: "https://github.com/salemmorelli1/Signals-Project"
+url: "https://salemmorelli1.github.io/Signals-Project/"
+keywords:
+  - computational statistics
+  - signal de-mixing
+  - sequential Monte Carlo
+  - torus-valued state-space model
+  - multipath channel inference
+  - MALA
+  - factorial design
+  - amortized score surrogate

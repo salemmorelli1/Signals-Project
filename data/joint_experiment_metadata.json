@@ -1,0 +1,70 @@
+{
+  "experiment_name": "Signals Project Executed Joint Torus SSM",
+  "validation_scope": "Operationally representative simulation validation; not field or operational SIGINT validation.",
+  "design": "2 x 3 x 3 paired full factorial",
+  "unique_physical_trajectories": 900,
+  "experimental_rows": 1800,
+  "repetitions_per_cell": 100,
+  "config": {
+    "sample_rate_hz": 128.0,
+    "n_samples": 60,
+    "hop_interval": 12,
+    "emitters": 2,
+    "particles": 64,
+    "resample_fraction": 0.58,
+    "forced_move_interval": 6,
+    "mala_steps": 1,
+    "quadrature_nodes": 24,
+    "wrapped_lifts": 2,
+    "snr_levels_db": [
+      15.0,
+      5.0,
+      -5.0
+    ],
+    "channel_modes": [
+      "LOS",
+      "MP",
+      "NLOS"
+    ],
+    "emitter1_channels_hz": [
+      18.0,
+      30.0,
+      42.0,
+      54.0
+    ],
+    "emitter2_channels_hz": [
+      42.0,
+      50.0,
+      54.0,
+      62.0
+    ],
+    "hop_probability": 0.34,
+    "logamp_mean": 0.0,
+    "logamp_reversion": 0.035,
+    "logamp_sd": 0.035,
+    "frequency_rho": 0.82,
+    "frequency_sd": 0.42,
+    "phase_sd": 0.075,
+    "channel_rho": 0.965,
+    "channel_sd": 0.05,
+    "cauchy_variance_fraction": 0.1,
+    "cauchy_standard_bound": 5.0,
+    "surrogate_hidden": 72,
+    "surrogate_ridge": 0.08,
+    "surrogate_train_rows_per_mode": 900,
+    "drift_clip": 120.0
+  },
+  "surrogate_validation": {
+    "validation_score_rmse": 12.83846832818761,
+    "validation_score_correlation": 0.923564966684655,
+    "training_rows": 2214,
+    "validation_rows": 486
+  },
+  "executed_components": [
+    "joint sequential particles over amplitude, frequency, hopping state, torus phase, channel, and delay buffer",
+    "Gaussian plus truncated-Cauchy convolution likelihood by Gauss-Legendre log-sum-exp quadrature",
+    "flat-torus tangent MALA with wrapped-Gaussian forward and reverse proposal densities",
+    "latent tapped-delay complex channel propagation",
+    "exact-target correction for analytical and amortized score proposals"
+  ]
+}

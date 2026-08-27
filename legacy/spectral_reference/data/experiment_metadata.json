@@ -1,0 +1,50 @@
+{
+  "experiment_name": "Signals Project Reference Benchmark",
+  "design": "2 x 3 x 3 full factorial with paired architecture comparisons",
+  "unique_physical_trajectories": 900,
+  "experimental_rows": 1800,
+  "repetitions_per_cell": 100,
+  "config": {
+    "sample_rate_hz": 256.0,
+    "window_size": 64,
+    "windows_per_trajectory": 4,
+    "n_fft": 2048,
+    "snr_levels_db": [
+      15.0,
+      5.0,
+      -5.0
+    ],
+    "channel_modes": [
+      "LOS",
+      "MP",
+      "NLOS"
+    ],
+    "source1_channels_hz": [
+      18.0,
+      26.0,
+      34.0,
+      42.0
+    ],
+    "source2_channels_hz": [
+      50.0,
+      58.0,
+      66.0,
+      74.0
+    ],
+    "jump_probability": 0.42,
+    "mala_iterations": 110,
+    "mala_burn": 30,
+    "mala_tau": 1.25,
+    "spectral_weight": 1.8,
+    "surrogate_hidden": 48,
+    "surrogate_ridge": 0.01,
+    "training_trajectories": 120,
+    "training_candidates_per_source": 3
+  },
+  "surrogate_validation": {
+    "validation_score_rmse": 0.41479929689144135,
+    "validation_score_correlation": 0.8792274191212914,
+    "training_rows": 2304
+  },
+  "interpretation": "Simulation evidence from a spectral pseudo-posterior reference benchmark; not operational validation."
+}

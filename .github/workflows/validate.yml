@@ -1,0 +1,38 @@
+name: Validate joint torus SSM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile src/signals_project/joint_ssm.py
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: .
+      - run: python -m src.signals_project.joint_ssm --output /tmp/signals-smoke --repetitions 1 --particles 24 --samples 24
+        env:
+          PYTHONPATH: .
+      - run: python scripts/analyze_joint_results.py
+      - run: python scripts/build_site.py
+      - run: python scripts/build_report.py
+      - name: Verify publication artifacts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from pypdf import PdfReader
+          html = Path("index.html").read_text(encoding="utf-8")
+          assert "report/Signals_Project_APA_Report.pdf" in html
+          assert "The joint torus SSM is now executed" in html
+          assert "operationally representative simulation validation" in html
+          assert len(PdfReader("report/Signals_Project_APA_Report.pdf").pages) == 27
+          assert sum(1 for _ in open("data/joint_factorial_results.csv")) == 1801
+          PY
