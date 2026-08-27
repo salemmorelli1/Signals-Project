@@ -30,12 +30,37 @@ SURROGATE = "Amortized joint surrogate"
 
 
 def setup_fonts() -> None:
+    """Register an APA-compatible serif family on local and CI runners."""
     runtime = Path(os.environ.get("CODEX_PRIMARY_RUNTIME_ROOT", "/opt/codex/runtimes/codex-primary-runtime"))
     folder = runtime / "dependencies/native/libreoffice-headless/libreoffice/share/fonts/truetype"
-    for name, filename in [("APA", "LiberationSerif-Regular.ttf"), ("APA-Bold", "LiberationSerif-Bold.ttf"), ("APA-Italic", "LiberationSerif-Italic.ttf")]:
-        path = folder / filename
-        if path.exists():
-            pdfmetrics.registerFont(TTFont(name, str(path)))
+    font_files = {
+        "APA": "LiberationSerif-Regular.ttf",
+        "APA-Bold": "LiberationSerif-Bold.ttf",
+        "APA-Italic": "LiberationSerif-Italic.ttf",
+        "APA-BoldItalic": "LiberationSerif-BoldItalic.ttf",
+    }
+
+    if all((folder / filename).exists() for filename in font_files.values()):
+        for name, filename in font_files.items():
+            pdfmetrics.registerFont(TTFont(name, str(folder / filename)))
+    else:
+        # GitHub-hosted runners do not contain the Codex runtime font bundle.
+        # Alias ReportLab's built-in Times family so the report remains portable.
+        for name, face in {
+            "APA": "Times-Roman",
+            "APA-Bold": "Times-Bold",
+            "APA-Italic": "Times-Italic",
+            "APA-BoldItalic": "Times-BoldItalic",
+        }.items():
+            pdfmetrics.registerFont(pdfmetrics.Font(name, face, "WinAnsiEncoding"))
+
+    pdfmetrics.registerFontFamily(
+        "APA",
+        normal="APA",
+        bold="APA-Bold",
+        italic="APA-Italic",
+        boldItalic="APA-BoldItalic",
+    )
 
 
 def styles() -> dict[str, ParagraphStyle]:
