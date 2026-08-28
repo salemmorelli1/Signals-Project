@@ -1,4 +1,4 @@
-name: Validate joint torus SSM
+name: Validate joint torus SSM and WiSig adapter
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m py_compile src/signals_project/joint_ssm.py
+      - run: python -m py_compile src/signals_project/joint_ssm.py src/signals_project/wisig_realdata.py
       - run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: .
@@ -31,8 +31,10 @@ jobs:
           from pypdf import PdfReader
           html = Path("index.html").read_text(encoding="utf-8")
           assert "report/Signals_Project_APA_Report.pdf" in html
-          assert "The joint torus SSM is now executed" in html
-          assert "operationally representative simulation validation" in html
+          assert "WiSig ManyRx" in html
+          assert "awaiting_local_dataset" in html
+          assert "digitally overlapped" in html
+          assert "not simultaneous" in html.lower()
           assert len(PdfReader("report/Signals_Project_APA_Report.pdf").pages) == 27
           assert sum(1 for _ in open("data/joint_factorial_results.csv")) == 1801
           PY

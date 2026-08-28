@@ -1,7 +1,19 @@
 # Protocol Required for an Operational Validation Claim
 
-The current repository does not claim operational SIGINT validation. The
-following gates must be completed before that language is used publicly.
+The current repository does not claim operational SIGINT validation. WiSig
+adds genuine hardware-captured source I/Q, but its controlled digital overlaps
+are not simultaneous RF captures and do not supply hop or channel-path truth.
+The following gates must still be completed before operational language is
+used publicly.
+
+## Public-data bridge: WiSig
+
+The ManyRx compact subset is the predeclared external bridge between simulation
+and a new controlled campaign. Receiver-held-out and day-held-out partitions,
+non-equalized I/Q, deterministic digital overlaps, and component-level truth
+are specified in `WISIG_REAL_DATA_PROTOCOL.md`. This gate can support an
+external real-data de-mixing statement after execution, but not an operational
+SIGINT statement.
 
 ## Gate 1: Frozen analysis
 
@@ -51,5 +63,6 @@ criteria are met on both the primary and replication campaigns.
 ## Permitted language before completion
 
 > The broader joint torus-valued SSM has been executed and validated in an
-> operationally representative simulation. Field and operational SIGINT
-> validation remain pending.
+> operationally representative simulation. A WiSig external real-data
+> evaluation is implemented but remains pending dataset execution. Field,
+> simultaneous-RF, HIL, and operational SIGINT validation remain pending.

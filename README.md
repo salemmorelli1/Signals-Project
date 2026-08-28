@@ -1,112 +1,139 @@
 # Signals Project
 
-This repository executes a blind, joint state-space filter for two overlapping
-frequency-hopping emitters observed as complex baseband I/Q samples. The
-filtering distribution includes amplitude, frequency, discrete hop state,
-phase on the flat torus, latent complex tapped-delay channels, and delayed
-source history.
+This repository evaluates a blind, joint torus-valued state-space model for
+two-source complex I/Q de-mixing. It now has two deliberately separate evidence
+lanes:
 
-Two exact-target MALA proposal operators are compared in a paired `2 x 3 x 3`
-full factorial design:
+1. **WiSig external real-data benchmark (primary extension).** Genuine,
+   non-equalized WiSig receiver recordings are paired into controlled digital
+   overlaps with exact component truth, receiver/day leakage controls, and
+   deterministic manifests.
+2. **Executed joint-SSM simulation baseline.** The existing 2 × 3 × 3 paired
+   factorial benchmark remains frozen and fully reproducible.
 
-1. an analytical score of the joint transition and convolution likelihood;
-2. an amortized SiLU random-feature surrogate trained on independent exact
-   joint scores.
+The WiSig path uses the public
+[`WiSig-dataset/wisig-examples`](https://github.com/WiSig-dataset/wisig-examples)
+schema and the official **ManyRx** compact subset distributed by UCLA. The
+examples repository contains loaders and notebooks; the 1.2 GB data file must
+be downloaded separately from the
+[official WiSig dataset page](https://cores.ee.ucla.edu/downloads/datasets/wisig/).
 
-The completed experiment contains 100 trajectory blocks in each physical
-SNR-by-channel cell, 900 shared physical trajectories, and 1,800 method-level
-runs.
+## Evidence status
 
-## Validation claim
+| Lane | Data source | Status | Defensible statement |
+|---|---|---:|---|
+| Joint torus SSM baseline | Simulated I/Q | Complete | Executed and numerically verified in simulation |
+| WiSig ingestion and overlap construction | Public hardware-captured I/Q | Implemented; dataset run pending | Reproducible external-evaluation protocol |
+| WiSig model results | Public hardware-captured I/Q | Not yet executed | No performance claim until artifacts are produced |
+| Simultaneous RF / hardware-in-the-loop | New controlled capture | Not included | No operational SIGINT claim |
 
-The repository establishes **operationally representative simulation
-validation**. It does **not** establish field or operational SIGINT validation.
-That stronger claim requires lawful controlled receiver recordings,
-independently blinded ground truth, calibrated hardware timing, frozen code and
-weights, and external replication. The exact validation ladder is documented
-in `docs/OPERATIONAL_VALIDATION_PROTOCOL.md` and in the report.
+WiSig transmitters were recorded separately. This repository therefore says
+**digitally overlapped hardware-captured I/Q**, never “simultaneous over-the-air
+co-channel capture.” The WiSig benchmark can externally test receiver/day
+transfer and de-mixing reconstruction, but it cannot validate frequency-hop
+tracking, true channel taps, or a hardware-in-the-loop deployment.
 
-## Executed model
+## Prepare the real-data benchmark
 
-- joint sequential particles over two log amplitudes, frequencies, hop states,
-  torus phases, complex channel taps, and source lag buffers;
-- switching frequency dynamics over overlapping channel alphabets;
-- Gaussian plus truncated-Cauchy **convolution** density evaluated by stable
-  Gauss-Legendre log-sum-exp quadrature;
-- LOS, minor-multipath, and delayed NLOS complex channels inferred blindly;
-- tangent-space phase proposals mapped by the flat-torus exponential map;
-- lift-summed wrapped-Gaussian forward and reverse proposal densities;
-- exact-target Metropolis correction for both score architectures; and
-- permanent numerical, geometric, blindness, and end-to-end tests.
-
-## Main result
-
-Across 900 paired trajectories per architecture, mean frequency MSE was
-246.76 Hz squared for the analytical score and 238.41 Hz squared for the
-surrogate. The raw paired surrogate-minus-analytical difference was -8.35 Hz
-squared (95% CI [-24.83, 8.14]). In the blocked multivariate analysis of log
-MSE, SNR, channel complexity, and their interaction survived Holm correction;
-the architecture main effect did not. The surrogate added 0.073 ms per I/Q
-sample and had lower MALA acceptance.
-
-## View the project
-
-- Interactive laboratory: <https://salemmorelli1.github.io/Signals-Project/>
-- 27-page APA-style report:
-  <https://salemmorelli1.github.io/Signals-Project/report/Signals_Project_APA_Report.pdf>
-
-## Reproduce
+1. Download the **ManyRx** compact subset from the official WiSig page.
+2. Extract its `.pkl` file to `external_data/wisig/ManyRx.pkl`.
+3. Run the adapter:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+PYTHONPATH=. python -m src.signals_project.wisig_realdata \
+  --dataset external_data/wisig/ManyRx.pkl \
+  --output external_data/derived/wisig_manyrx \
+  --mixtures-per-domain 25 \
+  --seed 2026 \
+  --trust-official-pickle
+```
+
+The acknowledgement flag exists because Python pickle files can execute code
+when loaded. Use it only for the official UCLA file. The raw dataset and
+derived I/Q are ignored by Git; only compact aggregate results and provenance
+metadata should later be committed.
+
+The command creates:
+
+- `wisig_overlap_manifest.csv`: exact Tx/Rx/day/signal references and SIR;
+- `wisig_digital_overlaps.npz`: source A, scaled source B, and their exact sum;
+- `wisig_preparation_metadata.json`: SHA-256, split counts, license, and claim scope.
+
+Default construction uses non-equalized I/Q (`equalized=0`) and 25 mixtures per
+receiver/day domain, so the working subset is small compared with the original
+download. Increase the cap only for the locked confirmatory run.
+
+## Leakage-safe split
+
+- **Train:** training receivers on training days.
+- **Validation:** the same training receivers on a held-out day.
+- **Test:** receivers never used in training or validation, on all days.
+
+Digital pairs are formed only within a common receiver/day domain and always
+use two distinct transmitters. The test component recordings remain sealed
+until preprocessing, tuning, and model selection are frozen.
+
+## Executed simulation baseline
+
+The frozen baseline carries amplitude, frequency, hop state, phase on
+\(\mathbb T^2\), latent complex tapped-delay channels, and delayed source
+history. It compares an analytical score with an amortized SiLU score under an
+exact-target Metropolis correction and an exact Gaussian–truncated-Cauchy
+convolution likelihood.
+
+Across 900 paired simulated trajectories per architecture, mean frequency MSE
+was 246.76 Hz² for the analytical score and 238.41 Hz² for the surrogate. The
+raw paired difference was −8.35 Hz², 95% CI [−24.83, 8.14]. These are simulation
+results and are not presented as WiSig results.
+
+## Reproduce and verify
+
+```bash
 PYTHONPATH=. python -m unittest discover -s tests -v
+
+# Optional: rerun the frozen simulation factorial
 PYTHONPATH=. python -m src.signals_project.joint_ssm \
   --output data --repetitions 100 --particles 64 --samples 60
-
 python scripts/analyze_joint_results.py
+
 python scripts/build_site.py
 python scripts/build_report.py
 ```
 
-The factorial execution may take several minutes depending on the processor.
-The committed artifacts permit the site and report to be rebuilt without
-rerunning the experiment.
+## Project links
 
-## Evidence files
-
-- `data/joint_factorial_results.csv` - all 1,800 method-level outcomes;
-- `data/joint_cell_summary.csv` - cell means and standard deviations;
-- `data/joint_paired_effects.csv` - paired architecture contrasts;
-- `data/joint_factorial_effects.csv` - blocked repeated-measures tests;
-- `data/joint_example_trace.csv` - predeclared interactive NLOS trace;
-- `data/joint_experiment_metadata.json` - immutable execution settings; and
-- `data/joint_surrogate_weights.npz` - fitted surrogate parameters.
+- Interactive laboratory: <https://salemmorelli1.github.io/Signals-Project/>
+- 27-page simulation-baseline report:
+  <https://salemmorelli1.github.io/Signals-Project/report/Signals_Project_APA_Report.pdf>
+- WiSig real-data protocol: `docs/WISIG_REAL_DATA_PROTOCOL.md`
+- Validation ladder: `docs/OPERATIONAL_VALIDATION_PROTOCOL.md`
 
 ## Repository map
 
 ```text
 .
 |-- index.html
-|-- data/
+|-- data/                         # committed aggregate evidence/status
+|-- external_data/                # local only; ignored by Git
 |-- report/Signals_Project_APA_Report.pdf
-|-- src/signals_project/joint_ssm.py
-|-- tests/test_joint_ssm.py
+|-- src/signals_project/
+|   |-- joint_ssm.py
+|   `-- wisig_realdata.py
+|-- tests/
 |-- scripts/
 |-- docs/
-|-- legacy/spectral_reference/
-|-- .github/workflows/
-|-- CITATION.cff
-|-- LICENSE
-`-- README.md
+`-- .github/workflows/
 ```
 
-The earlier spectral pseudo-posterior benchmark is retained under
-`legacy/spectral_reference/` for provenance; it is not the current experiment.
+## Citation and licenses
 
-## License
+For WiSig, cite Hanna, Karunaratne, and Cabric (2022), *IEEE Access*, 10,
+22808–22818, <https://doi.org/10.1109/ACCESS.2022.3154790>.
 
-Code is released under the MIT License. The report and generated figures are
-provided for scholarly and educational use with attribution.
+Signals Project code is MIT licensed. The `wisig-examples` code is BSD-3-Clause.
+The WiSig dataset is distributed under CC BY-NC-SA 4.0; its license governs the
+downloaded and derived capture data.

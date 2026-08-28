@@ -1,0 +1,16 @@
+{
+  "dataset": "WiSig ManyRx compact subset",
+  "official_dataset_page": "https://cores.ee.ucla.edu/downloads/datasets/wisig/",
+  "examples_repository": "https://github.com/WiSig-dataset/wisig-examples",
+  "reported_download_size_gb": 1.2,
+  "expected_signal_shape": [256, 2],
+  "selected_equalization": 0,
+  "source_iq": "hardware-captured public WiFi preambles",
+  "overlap_construction": "deterministic digital sum of two distinct transmitter recordings within one receiver/day domain",
+  "status": "awaiting_local_dataset",
+  "real_data_executed": false,
+  "performance_results_available": false,
+  "simultaneous_rf_capture": false,
+  "hardware_in_the_loop": false,
+  "claim_scope": "Integration code and preregistered external-evaluation design are complete. WiSig performance claims remain unavailable until the official dataset is run and aggregate artifacts are committed."
+}

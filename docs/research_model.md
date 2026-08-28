@@ -107,3 +107,14 @@ The implementation and full factorial experiment establish operationally
 representative simulation validation. See
 `docs/OPERATIONAL_VALIDATION_PROTOCOL.md` for the evidence required before any
 field or operational validation statement is defensible.
+
+## WiSig external-evaluation extension
+
+The public-data lane uses the ManyRx compact subset as hardware-captured source
+I/Q. It builds deterministic digital overlaps from two distinct transmitters
+within one receiver/day domain and holds receivers and days out at the domain
+level. Because WiSig contains separately recorded WiFi preambles rather than
+simultaneous frequency-hopping mixtures, this extension changes the admissible
+real-data endpoints to component reconstruction, SI-SDR, association, latency,
+particle health, and failures. The switching-hop component remains a
+simulation-only result. See `docs/WISIG_REAL_DATA_PROTOCOL.md`.

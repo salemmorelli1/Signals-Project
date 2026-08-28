@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use this simulation benchmark, please cite it as follows."
-title: "Signals Project: Executed Blind De-Mixing With a Joint Torus-Valued State-Space Model"
+message: "If you use this software, cite Signals Project and the WiSig dataset paper."
+title: "Signals Project: Joint Torus-Valued De-Mixing With a WiSig External-Data Protocol"
 type: software
 authors:
   - family-names: "Morelli"
@@ -19,3 +19,21 @@ keywords:
   - MALA
   - factorial design
   - amortized score surrogate
+  - WiSig
+  - real I/Q
+references:
+  - type: article
+    title: "WiSig: A Large-Scale WiFi Signal Dataset for Receiver and Channel Agnostic RF Fingerprinting"
+    authors:
+      - family-names: "Hanna"
+        given-names: "S."
+      - family-names: "Karunaratne"
+        given-names: "S."
+      - family-names: "Cabric"
+        given-names: "D."
+    journal: "IEEE Access"
+    volume: 10
+    start: 22808
+    end: 22818
+    year: 2022
+    doi: "10.1109/ACCESS.2022.3154790"

@@ -5,3 +5,5 @@ __pycache__/
 data-pilot*/
 tmp/
 report/rendered/
+external_data/
+*.pkl
