@@ -32,7 +32,7 @@ jobs:
           html = Path("index.html").read_text(encoding="utf-8")
           assert "report/Signals_Project_APA_Report.pdf" in html
           assert "WiSig ManyRx" in html
-          assert "awaiting_local_dataset" in html
+          assert "dataset_prepared" in html
           assert "digitally overlapped" in html
           assert "not simultaneous" in html.lower()
           assert len(PdfReader("report/Signals_Project_APA_Report.pdf").pages) == 27

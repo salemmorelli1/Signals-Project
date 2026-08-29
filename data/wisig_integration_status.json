@@ -3,14 +3,29 @@
   "official_dataset_page": "https://cores.ee.ucla.edu/downloads/datasets/wisig/",
   "examples_repository": "https://github.com/WiSig-dataset/wisig-examples",
   "reported_download_size_gb": 1.2,
+  "extracted_size_gb": 1.9,
   "expected_signal_shape": [256, 2],
   "selected_equalization": 0,
   "source_iq": "hardware-captured public WiFi preambles",
   "overlap_construction": "deterministic digital sum of two distinct transmitter recordings within one receiver/day domain",
-  "status": "awaiting_local_dataset",
+  "status": "dataset_prepared",
+  "dataset_preparation_executed": true,
+  "dataset_sha256": "f634d90585167437d196c89b7c5a344903180bf4f5a55d02d175b8074e009d9a",
+  "transmitters": 10,
+  "receivers": 32,
+  "capture_days": 4,
+  "nonempty_tx_rx_day_cells": 1251,
+  "non_equalized_signals": 249666,
+  "mixtures": 3200,
+  "split_counts": {
+    "train": 1875,
+    "validation": 625,
+    "test": 700
+  },
+  "derived_artifact_size_mb": 15,
   "real_data_executed": false,
   "performance_results_available": false,
   "simultaneous_rf_capture": false,
   "hardware_in_the_loop": false,
-  "claim_scope": "Integration code and preregistered external-evaluation design are complete. WiSig performance claims remain unavailable until the official dataset is run and aggregate artifacts are committed."
+  "claim_scope": "The official WiSig ManyRx data were ingested and 3,200 leakage-controlled digital overlaps were prepared. Model-performance claims remain unavailable until the locked inference benchmark is executed."
 }
