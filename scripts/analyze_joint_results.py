@@ -16,6 +16,8 @@ from src.signals_project.joint_ssm import (
     paired_contrasts,
     summarize_cells,
     validate_factorial_frame,
+    write_csv_artifact,
+    write_text_artifact,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,11 +159,10 @@ def main() -> None:
         expected_snrs=config["snr_levels_db"],
         expected_channels=config["channel_modes"],
     )
-    summarize_cells(frame).to_csv(
+    write_csv_artifact(
+        summarize_cells(frame),
         DATA / "joint_cell_summary.csv",
-        index=False,
         float_format=ARTIFACT_FLOAT_FORMAT,
-        lineterminator="\n",
     )
     responses = {
         "mse_frequency": "log",
@@ -177,17 +178,15 @@ def main() -> None:
         ],
         ignore_index=True,
     )
-    effects.to_csv(
+    write_csv_artifact(
+        effects,
         DATA / "joint_factorial_effects.csv",
-        index=False,
         float_format=ARTIFACT_FLOAT_FORMAT,
-        lineterminator="\n",
     )
-    paired_contrasts(frame, responses).to_csv(
+    write_csv_artifact(
+        paired_contrasts(frame, responses),
         DATA / "joint_paired_effects.csv",
-        index=False,
         float_format=ARTIFACT_FLOAT_FORMAT,
-        lineterminator="\n",
     )
 
     architecture_means = (
@@ -202,8 +201,9 @@ def main() -> None:
         "primary_effects": primary.to_dict(orient="records"),
         "warning": "This is simulation evidence and is not field or operational SIGINT validation.",
     })
-    (DATA / "joint_inference_summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
+    write_text_artifact(
+        DATA / "joint_inference_summary.json",
+        json.dumps(summary, indent=2),
     )
 
 

@@ -122,7 +122,9 @@ PYTHONPATH=. python scripts/build_report.py
 Derived CSV and JSON statistics are serialized to 12 significant digits with
 Unix line endings. This retains materially more precision than the published
 figures while preventing harmless BLAS/platform last-bit differences from
-changing the committed evidence package.
+changing the committed evidence package. The builders compare the prospective
+UTF-8 bytes first and do not rewrite an artifact when those bytes are already
+current, avoiding Windows index churn from timestamp-only rewrites.
 
 The report builder also compares decoded RGBA pixels before replacing a
 committed PNG. Equivalent plots therefore retain their existing bytes even when
