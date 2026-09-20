@@ -23,7 +23,7 @@ be downloaded separately from the
 | Lane | Data source | Status | Defensible statement |
 |---|---|---:|---|
 | Joint torus SSM baseline | Simulated I/Q | Complete | Executed and numerically verified in simulation |
-| WiSig ingestion and overlap construction | Public hardware-captured I/Q | Implemented; dataset run pending | Reproducible external-evaluation protocol |
+| WiSig ingestion and overlap construction | Public hardware-captured I/Q | Executed; 3,200 overlaps prepared | Provenance-checked external-evaluation input |
 | WiSig model results | Public hardware-captured I/Q | Not yet executed | No performance claim until artifacts are produced |
 | Simultaneous RF / hardware-in-the-loop | New controlled capture | Not included | No operational SIGINT claim |
 
@@ -35,13 +35,19 @@ tracking, true channel taps, or a hardware-in-the-loop deployment.
 
 ## Prepare the real-data benchmark
 
+The tested runtime is CPython 3.12. The exact CI environment is recorded in
+`requirements-ci-lock.txt`; `requirements.txt` contains the supported direct
+runtime dependencies.
+
 1. Download the **ManyRx** compact subset from the official WiSig page.
 2. Extract its `.pkl` file to `external_data/wisig/ManyRx.pkl`.
 3. Run the adapter:
 
 ```bash
+python --version  # must report Python 3.12.x
 python -m venv .venv
-source .venv/bin/activate
+# Linux/macOS: source .venv/bin/activate
+# Windows Git Bash: source .venv/Scripts/activate
 pip install -r requirements.txt
 
 PYTHONPATH=. python -m src.signals_project.wisig_realdata \
@@ -49,13 +55,16 @@ PYTHONPATH=. python -m src.signals_project.wisig_realdata \
   --output external_data/derived/wisig_manyrx \
   --mixtures-per-domain 25 \
   --seed 2026 \
+  --expected-sha256 f634d90585167437d196c89b7c5a344903180bf4f5a55d02d175b8074e009d9a \
   --trust-official-pickle
 ```
 
 The acknowledgement flag exists because Python pickle files can execute code
-when loaded. Use it only for the official UCLA file. The raw dataset and
-derived I/Q are ignored by Git; only compact aggregate results and provenance
-metadata should later be committed.
+when loaded. The adapter verifies the audited ManyRx SHA-256 above before
+unpickling; both the explicit acknowledgement and matching digest are required.
+Use the flag only for the official UCLA file. The raw dataset and derived I/Q
+are ignored by Git; only compact aggregate results and provenance metadata
+should later be committed.
 
 The command creates:
 
@@ -82,27 +91,38 @@ until preprocessing, tuning, and model selection are frozen.
 The frozen baseline carries amplitude, frequency, hop state, phase on
 \(\mathbb T^2\), latent complex tapped-delay channels, and delayed source
 history. It compares an analytical score with an amortized SiLU score under an
-exact-target Metropolis correction and an exact Gaussian–truncated-Cauchy
-convolution likelihood.
+Metropolis correction against the same configured numerical target and a
+Gaussian–truncated-Cauchy convolution likelihood evaluated by fixed quadrature.
 
 Across 900 paired simulated trajectories per architecture, mean frequency MSE
-was 246.76 Hz² for the analytical score and 238.41 Hz² for the surrogate. The
-raw paired difference was −8.35 Hz², 95% CI [−24.83, 8.14]. These are simulation
-results and are not presented as WiSig results.
+was 246.76 Hz² for the analytical score and 238.41 Hz² for the surrogate. After
+averaging the repeated conditions within each of 100 independent seed profiles,
+the raw paired difference was −8.35 Hz², 95% <i>t</i> CI [−24.94, 8.25]. These
+are simulation results and are not presented as WiSig results.
+
+The committed timing endpoint is descriptive software timing. Every physical
+condition ran the analytical method before the surrogate, so the latency
+contrast is not a randomized or causal architecture benchmark.
 
 ## Reproduce and verify
 
 ```bash
-PYTHONPATH=. python -m unittest discover -s tests -v
+PYTHONPATH=. python -m pytest -q
+PYTHONPATH=. python scripts/validate_repository.py
 
 # Optional: rerun the frozen simulation factorial
 PYTHONPATH=. python -m src.signals_project.joint_ssm \
   --output data --repetitions 100 --particles 64 --samples 60
-python scripts/analyze_joint_results.py
+PYTHONPATH=. python scripts/analyze_joint_results.py
 
-python scripts/build_site.py
-python scripts/build_report.py
+PYTHONPATH=. python scripts/build_site.py
+PYTHONPATH=. python scripts/build_report.py
 ```
+
+Derived CSV and JSON statistics are serialized to 12 significant digits with
+Unix line endings. This retains materially more precision than the published
+figures while preventing harmless BLAS/platform last-bit differences from
+changing the committed evidence package.
 
 ## Project links
 

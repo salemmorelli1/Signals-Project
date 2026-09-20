@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 
 import numpy as np
+import pandas as pd
 
 from src.signals_project.joint_ssm import (
     ConvolutionNoise,
@@ -16,6 +17,7 @@ from src.signals_project.joint_ssm import (
     channel_spec,
     pack_score,
     pack_state,
+    paired_contrasts,
     simulate_joint_trajectory,
     transition_target,
     unpack_state,
@@ -42,6 +44,16 @@ class ExactNoiseLawTests(unittest.TestCase):
         minus, _ = self.noise.log_prob_score_real(residual - step, False)
         numerical = (plus - minus) / (2.0 * step)
         np.testing.assert_allclose(score, numerical, rtol=1e-6, atol=1e-7)
+
+    def test_invalid_noise_parameters_fail_closed(self) -> None:
+        for kwargs in (
+            {"sigma_g": 0.0, "gamma": 0.17, "bound": 0.85, "nodes": 48},
+            {"sigma_g": 0.31, "gamma": float("nan"), "bound": 0.85, "nodes": 48},
+            {"sigma_g": 0.31, "gamma": 0.17, "bound": 0.85, "nodes": 1},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    ConvolutionNoise(**kwargs)
 
 
 class TorusGeometryTests(unittest.TestCase):
@@ -94,8 +106,12 @@ class JointTargetTests(unittest.TestCase):
             minus[column] -= step
             plus_state = unpack_state(plus[None, :], candidate, spec)
             minus_state = unpack_state(minus[None, :], candidate, spec)
-            f_plus, _, _ = transition_target(plus_state, previous, observation, noise, spec, cfg, False)
-            f_minus, _, _ = transition_target(minus_state, previous, observation, noise, spec, cfg, False)
+            f_plus, _, _ = transition_target(
+                plus_state, previous, observation, noise, spec, cfg, False
+            )
+            f_minus, _, _ = transition_target(
+                minus_state, previous, observation, noise, spec, cfg, False
+            )
             numerical[column] = (f_plus[0] - f_minus[0]) / (2.0 * step)
         np.testing.assert_allclose(analytical, numerical, rtol=2e-7, atol=2e-7)
 
@@ -113,6 +129,80 @@ class JointTargetTests(unittest.TestCase):
             self.assertTrue(np.all(np.isfinite(np.asarray(output[key]))), key)
         phase = np.asarray(output["phase"])
         self.assertTrue(np.all((phase >= 0.0) & (phase < 2.0 * math.pi)))
+
+    def test_invalid_or_unsupported_configurations_fail_closed(self) -> None:
+        invalid = (
+            replace(JointConfig(), emitters=3),
+            replace(JointConfig(), sample_rate_hz=float("nan")),
+            replace(JointConfig(), particles=0),
+            replace(JointConfig(), cauchy_variance_fraction=1.0),
+            replace(JointConfig(), emitter2_channels_hz=(64.0, 70.0)),
+        )
+        for cfg in invalid:
+            with self.subTest(cfg=cfg):
+                with self.assertRaises(ValueError):
+                    cfg.validate()
+
+    def test_surrogate_architecture_requires_a_fitted_surrogate(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires a fitted surrogate"):
+            JointParticleFilter(
+                JointConfig(),
+                "LOS",
+                "Amortized joint surrogate",
+                None,
+                3,
+            )
+
+    def test_filter_rejects_nonfinite_or_wrong_length_observations(self) -> None:
+        cfg = replace(JointConfig(), particles=4, n_samples=12)
+        engine = JointParticleFilter(cfg, "LOS", "Analytical joint score", None, 3)
+        noise = ConvolutionNoise(0.3, 0.1, 0.5, 12)
+        with self.assertRaisesRegex(ValueError, "12 samples"):
+            engine.run(np.ones(11, dtype=np.complex128), noise)
+        observation = np.ones(12, dtype=np.complex128)
+        observation[3] = complex(float("nan"), 0.0)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            engine.run(observation, noise)
+
+
+class FactorialIntegrityTests(unittest.TestCase):
+    @staticmethod
+    def complete_frame() -> pd.DataFrame:
+        rows = []
+        for seed in range(2):
+            for architecture, offset in (
+                ("Analytical joint score", 0.0),
+                ("Amortized joint surrogate", 1.0),
+            ):
+                rows.append(
+                    {
+                        "seed": seed,
+                        "architecture": architecture,
+                        "snr_db": 5.0,
+                        "channel": "LOS",
+                        "mse_frequency": 10.0 + seed + offset,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_complete_paired_design_reports_actual_pair_count(self) -> None:
+        contrasts = paired_contrasts(self.complete_frame(), ["mse_frequency"])
+        self.assertTrue((contrasts["n_pairs"] == 2).all())
+        self.assertTrue((contrasts["n_blocks"] == 2).all())
+        self.assertTrue(np.allclose(contrasts["mean_difference_surrogate_minus_analytical"], 1.0))
+
+    def test_incomplete_or_duplicate_paired_design_is_rejected(self) -> None:
+        frame = self.complete_frame()
+        with self.assertRaisesRegex(ValueError, "Incomplete factorial design"):
+            paired_contrasts(frame.iloc[:-1], ["mse_frequency"])
+        with self.assertRaisesRegex(ValueError, "duplicate design rows"):
+            paired_contrasts(pd.concat([frame, frame.iloc[[0]]]), ["mse_frequency"])
+
+    def test_nonfinite_factorial_metric_is_rejected(self) -> None:
+        frame = self.complete_frame()
+        frame.loc[0, "mse_frequency"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "finite and numeric"):
+            paired_contrasts(frame, ["mse_frequency"])
 
 
 if __name__ == "__main__":

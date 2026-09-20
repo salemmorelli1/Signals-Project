@@ -4,18 +4,18 @@
   "multiplicity": "Holm adjustment across the seven primary-response omnibus effects",
   "architecture_means": {
     "Amortized joint surrogate": {
-      "mse_frequency": 238.41106586255444,
-      "phase_circular_rmse": 1.3703982107551371,
-      "channel_nmse": 0.24782112899585074,
-      "particle_ess_mean": 59.044773430578495,
-      "latency_ms_per_sample": 1.581494774833366
+      "mse_frequency": 238.411065863,
+      "phase_circular_rmse": 1.37039821076,
+      "channel_nmse": 0.247821128996,
+      "particle_ess_mean": 59.0447734306,
+      "latency_ms_per_sample": 1.58149477483
     },
     "Analytical joint score": {
-      "mse_frequency": 246.75689782899101,
-      "phase_circular_rmse": 1.3766482195207554,
-      "channel_nmse": 0.25365805636008204,
-      "particle_ess_mean": 59.05027831882603,
-      "latency_ms_per_sample": 1.50814491427779
+      "mse_frequency": 246.756897829,
+      "phase_circular_rmse": 1.37664821952,
+      "channel_nmse": 0.25365805636,
+      "particle_ess_mean": 59.0502783188,
+      "latency_ms_per_sample": 1.50814491428
     }
   },
   "primary_effects": [
@@ -25,9 +25,9 @@
       "effect": "Architecture",
       "df1": 1,
       "df2": 99,
-      "F": 0.7835929866351484,
-      "p_value": 0.37818951495727654,
-      "partial_eta_squared": 0.00785292414495539,
+      "F": 0.783592986635,
+      "p_value": 0.378189514957,
+      "partial_eta_squared": 0.00785292414496,
       "p_holm_within_response": 1.0
     },
     {
@@ -36,10 +36,10 @@
       "effect": "SNR",
       "df1": 2,
       "df2": 98,
-      "F": 19.0935845980839,
-      "p_value": 9.94040932103344e-08,
-      "partial_eta_squared": 0.2804021070528453,
-      "p_holm_within_response": 5.964245592620064e-07
+      "F": 19.0935845981,
+      "p_value": 9.94040932103e-08,
+      "partial_eta_squared": 0.280402107053,
+      "p_holm_within_response": 5.96424559262e-07
     },
     {
       "response": "mse_frequency",
@@ -47,10 +47,10 @@
       "effect": "Channel",
       "df1": 2,
       "df2": 98,
-      "F": 21.149784063902896,
-      "p_value": 2.3137548077022522e-08,
-      "partial_eta_squared": 0.3014946424444659,
-      "p_holm_within_response": 1.6196283653915767e-07
+      "F": 21.1497840639,
+      "p_value": 2.3137548077e-08,
+      "partial_eta_squared": 0.301494642444,
+      "p_holm_within_response": 1.61962836539e-07
     },
     {
       "response": "mse_frequency",
@@ -58,9 +58,9 @@
       "effect": "Architecture \u00d7 SNR",
       "df1": 2,
       "df2": 98,
-      "F": 0.14461052433921498,
-      "p_value": 0.8655435798405057,
-      "partial_eta_squared": 0.0029425510304450495,
+      "F": 0.144610524339,
+      "p_value": 0.865543579841,
+      "partial_eta_squared": 0.00294255103045,
       "p_holm_within_response": 1.0
     },
     {
@@ -69,9 +69,9 @@
       "effect": "Architecture \u00d7 Channel",
       "df1": 2,
       "df2": 98,
-      "F": 0.5787650147074673,
-      "p_value": 0.5624946573369649,
-      "partial_eta_squared": 0.011673647266844537,
+      "F": 0.578765014707,
+      "p_value": 0.562494657337,
+      "partial_eta_squared": 0.0116736472668,
       "p_holm_within_response": 1.0
     },
     {
@@ -80,10 +80,10 @@
       "effect": "SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 7.495839426869057,
-      "p_value": 2.6806428897272573e-05,
-      "partial_eta_squared": 0.23799459113556334,
-      "p_holm_within_response": 0.00013403214448636286
+      "F": 7.49583942687,
+      "p_value": 2.68064288973e-05,
+      "partial_eta_squared": 0.237994591136,
+      "p_holm_within_response": 0.000134032144486
     },
     {
       "response": "mse_frequency",
@@ -91,9 +91,9 @@
       "effect": "Architecture \u00d7 SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 0.6111763568908534,
-      "p_value": 0.6555801784757266,
-      "partial_eta_squared": 0.0248332850095453,
+      "F": 0.611176356891,
+      "p_value": 0.655580178476,
+      "partial_eta_squared": 0.0248332850095,
       "p_holm_within_response": 1.0
     }
   ],
