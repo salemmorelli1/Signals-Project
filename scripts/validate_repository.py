@@ -277,6 +277,12 @@ def validate_ci_contract() -> str:
         "Report generation must not depend on environment-specific fonts",
     )
     require("invariant=1" in report_builder, "Report generation must suppress volatile metadata")
+    attributes = {
+        line.strip()
+        for line in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    }
+    for rule in ("*.csv text eol=lf", "*.json text eol=lf", "*.html text eol=lf"):
+        require(rule in attributes, f"Missing cross-platform line-ending rule: {rule}")
     tracked_pickles = subprocess.run(
         ["git", "ls-files", "*.pkl"],
         cwd=ROOT,
