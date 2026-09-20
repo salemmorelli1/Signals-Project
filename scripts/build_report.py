@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import get_data_path
+from matplotlib.figure import Figure
+from PIL import Image as PillowImage
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import LETTER
@@ -208,6 +211,34 @@ def image(name: str, width: float = 6.55 * inch, height: float = 2.45 * inch) ->
     return item
 
 
+def _write_png_if_pixels_changed(candidate: PillowImage.Image, destination: Path) -> None:
+    """Preserve committed PNG bytes when a rebuild produces identical pixels."""
+    rendered = candidate.convert("RGBA")
+    rendered.load()
+    if destination.is_file():
+        with PillowImage.open(destination) as current:
+            existing = current.convert("RGBA")
+            existing.load()
+        if existing.size == rendered.size and existing.tobytes() == rendered.tobytes():
+            return
+    rendered.save(
+        destination,
+        format="PNG",
+        dpi=(220, 220),
+        optimize=False,
+        compress_level=9,
+    )
+
+
+def save_figure(fig: Figure, name: str) -> None:
+    """Render a figure while ignoring platform-only PNG encoding differences."""
+    buffer = BytesIO()
+    fig.savefig(buffer, format="png", dpi=220, bbox_inches="tight", metadata={})
+    buffer.seek(0)
+    with PillowImage.open(buffer) as candidate:
+        _write_png_if_pixels_changed(candidate, FIG / name)
+
+
 def add_page(
     story: list, title: str, elements: list, sty: dict[str, ParagraphStyle], number: int
 ) -> None:
@@ -273,7 +304,7 @@ def make_figures(
     ax.grid(axis="y", alpha=0.22)
     ax.legend(frameon=False, ncol=2)
     fig.tight_layout()
-    fig.savefig(FIG / "overall.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "overall.png")
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.4), sharey=True)
@@ -297,7 +328,7 @@ def make_figures(
     axes[0].set_ylabel("Frequency MSE (Hz²)")
     axes[2].legend(frameon=False, fontsize=7)
     fig.tight_layout()
-    fig.savefig(FIG / "factorial_mse.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "factorial_mse.png")
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.45))
@@ -323,7 +354,7 @@ def make_figures(
         ax.grid(alpha=0.2)
     axes[0].legend(frameon=False, fontsize=7)
     fig.tight_layout()
-    fig.savefig(FIG / "phase_channel.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "phase_channel.png")
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.45))
@@ -349,7 +380,7 @@ def make_figures(
         ax.grid(alpha=0.2)
     axes[0].legend(frameon=False, fontsize=7)
     fig.tight_layout()
-    fig.savefig(FIG / "health_compute.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "health_compute.png")
     plt.close(fig)
 
     pset = (
@@ -371,7 +402,7 @@ def make_figures(
     ax.set_xlabel("Paired difference: surrogate − analytical (Hz²)")
     ax.grid(axis="x", alpha=0.2)
     fig.tight_layout()
-    fig.savefig(FIG / "paired.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "paired.png")
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.5))
@@ -401,7 +432,7 @@ def make_figures(
             ax.grid(alpha=0.2)
     axes[1].legend(frameon=False, fontsize=7)
     fig.tight_layout()
-    fig.savefig(FIG / "trace.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "trace.png")
     plt.close(fig)
 
     d = trace[trace.architecture == ANALYTICAL].sort_values("sample")
@@ -417,7 +448,7 @@ def make_figures(
         ax.set_xlabel("I/Q sample")
         ax.grid(alpha=0.2)
     fig.tight_layout()
-    fig.savefig(FIG / "torus_ess.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "torus_ess.png")
     plt.close(fig)
 
     primary = effects[effects.response == "mse_frequency"].copy().sort_values("partial_eta_squared")
@@ -430,7 +461,7 @@ def make_figures(
     ax.set_xlabel("Partial η²")
     ax.grid(axis="x", alpha=0.2)
     fig.tight_layout()
-    fig.savefig(FIG / "effects.png", dpi=220, bbox_inches="tight")
+    save_figure(fig, "effects.png")
     plt.close(fig)
 
 
