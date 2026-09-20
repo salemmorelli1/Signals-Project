@@ -40,6 +40,7 @@ ANALYTICAL_ARCHITECTURE = "Analytical joint score"
 SURROGATE_ARCHITECTURE = "Amortized joint surrogate"
 ARCHITECTURES = (ANALYTICAL_ARCHITECTURE, SURROGATE_ARCHITECTURE)
 SUPPORTED_CHANNEL_MODES = ("LOS", "MP", "NLOS")
+ARTIFACT_FLOAT_FORMAT = "%.12g"
 
 
 def _require_integer(name: str, value: object, *, minimum: int = 0) -> int:
@@ -66,6 +67,25 @@ def _require_positive(name: str, value: Any) -> float:
     if number <= 0.0:
         raise ValueError(f"{name} must be positive")
     return number
+
+
+def canonical_artifact_float(value: Any) -> float:
+    """Return a finite float rounded for portable derived-artifact serialization."""
+    number = _require_finite("artifact value", value)
+    return float(format(number, ".12g"))
+
+
+def canonicalize_artifact(value: Any) -> Any:
+    """Normalize NumPy scalars and floats before deterministic JSON output."""
+    if isinstance(value, dict):
+        return {key: canonicalize_artifact(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [canonicalize_artifact(item) for item in value]
+    if isinstance(value, (float, np.floating)):
+        return canonical_artifact_float(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    return value
 
 
 def stable_seed(*parts: object) -> int:
@@ -1274,8 +1294,13 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
                 if complete % max(1, total // 10) == 0:
                     print(f"completed {complete}/{total} paired joint trajectories", flush=True)
     frame = pd.DataFrame(rows)
-    frame.to_csv(output / "joint_factorial_results.csv", index=False)
-    summarize_cells(frame).to_csv(output / "joint_cell_summary.csv", index=False)
+    frame.to_csv(output / "joint_factorial_results.csv", index=False, lineterminator="\n")
+    summarize_cells(frame).to_csv(
+        output / "joint_cell_summary.csv",
+        index=False,
+        float_format=ARTIFACT_FLOAT_FORMAT,
+        lineterminator="\n",
+    )
     contrast_metrics = [
         "mse_frequency",
         "phase_circular_rmse",
@@ -1284,9 +1309,14 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
         "latency_ms_per_sample",
     ]
     paired_contrasts(frame, contrast_metrics).to_csv(
-        output / "joint_paired_effects.csv", index=False
+        output / "joint_paired_effects.csv",
+        index=False,
+        float_format=ARTIFACT_FLOAT_FORMAT,
+        lineterminator="\n",
     )
-    pd.DataFrame(example_rows).to_csv(output / "joint_example_trace.csv", index=False)
+    pd.DataFrame(example_rows).to_csv(
+        output / "joint_example_trace.csv", index=False, lineterminator="\n"
+    )
     metadata = {
         "experiment_name": "Signals Project Executed Joint Torus SSM",
         "validation_scope": (

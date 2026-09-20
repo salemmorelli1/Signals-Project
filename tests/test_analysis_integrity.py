@@ -10,9 +10,16 @@ from scipy.stats import t as student_t
 
 from scripts.analyze_joint_results import holm_adjust, multivariate_within_seed
 from scripts.build_site import SITE_METRICS, simulation_summaries
+from src.signals_project.joint_ssm import canonical_artifact_float
 
 
 class AnalysisIntegrityTests(unittest.TestCase):
+    def test_artifact_float_is_finite_and_canonical(self) -> None:
+        self.assertEqual(canonical_artifact_float(0.7835929866351484), 0.783592986635)
+        self.assertEqual(canonical_artifact_float(1.2345678901234e-106), 1.23456789012e-106)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            canonical_artifact_float(float("nan"))
+
     def test_holm_adjustment_matches_known_example(self) -> None:
         adjusted = holm_adjust(np.array([0.01, 0.04, 0.03]))
         np.testing.assert_allclose(adjusted, np.array([0.03, 0.06, 0.06]))

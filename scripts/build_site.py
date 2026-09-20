@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t as student_t
 
-from src.signals_project.joint_ssm import validate_factorial_frame
+from src.signals_project.joint_ssm import canonical_artifact_float, validate_factorial_frame
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -55,8 +55,10 @@ def simulation_summaries(frame: pd.DataFrame) -> list[dict[str, object]]:
                     values = blocks[metric].to_numpy(dtype=float)
                     mean = float(np.mean(values))
                     standard_error = float(np.std(values, ddof=1) / math.sqrt(n_blocks))
-                    row[f"{metric}_mean"] = mean
-                    row[f"{metric}_ci95"] = critical * standard_error
+                    row[f"{metric}_mean"] = canonical_artifact_float(mean)
+                    row[f"{metric}_ci95"] = canonical_artifact_float(
+                        critical * standard_error
+                    )
                 rows.append(row)
     return rows
 

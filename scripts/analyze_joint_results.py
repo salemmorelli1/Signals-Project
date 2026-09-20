@@ -10,7 +10,9 @@ import pandas as pd
 from scipy.stats import f as f_distribution
 
 from src.signals_project.joint_ssm import (
+    ARTIFACT_FLOAT_FORMAT,
     FACTORIAL_METRICS,
+    canonicalize_artifact,
     paired_contrasts,
     summarize_cells,
     validate_factorial_frame,
@@ -155,7 +157,12 @@ def main() -> None:
         expected_snrs=config["snr_levels_db"],
         expected_channels=config["channel_modes"],
     )
-    summarize_cells(frame).to_csv(DATA / "joint_cell_summary.csv", index=False)
+    summarize_cells(frame).to_csv(
+        DATA / "joint_cell_summary.csv",
+        index=False,
+        float_format=ARTIFACT_FLOAT_FORMAT,
+        lineterminator="\n",
+    )
     responses = {
         "mse_frequency": "log",
         "phase_circular_rmse": "raw",
@@ -170,21 +177,31 @@ def main() -> None:
         ],
         ignore_index=True,
     )
-    effects.to_csv(DATA / "joint_factorial_effects.csv", index=False)
-    paired_contrasts(frame, responses).to_csv(DATA / "joint_paired_effects.csv", index=False)
+    effects.to_csv(
+        DATA / "joint_factorial_effects.csv",
+        index=False,
+        float_format=ARTIFACT_FLOAT_FORMAT,
+        lineterminator="\n",
+    )
+    paired_contrasts(frame, responses).to_csv(
+        DATA / "joint_paired_effects.csv",
+        index=False,
+        float_format=ARTIFACT_FLOAT_FORMAT,
+        lineterminator="\n",
+    )
 
     architecture_means = (
         frame.groupby("architecture")[list(responses)].mean().to_dict(orient="index")
     )
     primary = effects[effects.response == "mse_frequency"].copy()
-    summary = {
+    summary = canonicalize_artifact({
         "analysis": "Orthonormal-contrast multivariate repeated-measures analysis with trajectory seed as the block",
         "primary_response": "log frequency MSE",
         "multiplicity": "Holm adjustment across the seven primary-response omnibus effects",
         "architecture_means": architecture_means,
         "primary_effects": primary.to_dict(orient="records"),
         "warning": "This is simulation evidence and is not field or operational SIGINT validation.",
-    }
+    })
     (DATA / "joint_inference_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
