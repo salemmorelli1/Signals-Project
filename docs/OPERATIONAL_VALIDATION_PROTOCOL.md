@@ -63,6 +63,7 @@ criteria are met on both the primary and replication campaigns.
 ## Permitted language before completion
 
 > The broader joint torus-valued SSM has been executed and validated in an
-> operationally representative simulation. A WiSig external real-data
-> evaluation is implemented but remains pending dataset execution. Field,
-> simultaneous-RF, HIL, and operational SIGINT validation remain pending.
+> controlled simulation. The WiSig dataset has been provenance-checked and
+> converted into leakage-controlled digital overlaps, but locked model
+> inference remains pending. Field, simultaneous-RF, HIL, and operational
+> SIGINT validation remain pending.

@@ -9,6 +9,12 @@ import numpy as np
 import pandas as pd
 from scipy.stats import f as f_distribution
 
+from src.signals_project.joint_ssm import (
+    FACTORIAL_METRICS,
+    paired_contrasts,
+    summarize_cells,
+    validate_factorial_frame,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -45,7 +51,7 @@ def design_basis() -> tuple[np.ndarray, dict[str, list[int]], list[tuple[str, fl
         for jb in range(3):
             for jc in range(3):
                 column_terms.append((ja, jb, jc))
-    effects = {
+    effects: dict[str, list[int]] = {
         "Architecture": [],
         "SNR": [],
         "Channel": [],
@@ -57,7 +63,7 @@ def design_basis() -> tuple[np.ndarray, dict[str, list[int]], list[tuple[str, fl
     for column, (ja, jb, jc) in enumerate(column_terms):
         if ja == jb == jc == 0:
             continue
-        active = tuple(x > 0 for x in (ja, jb, jc))
+        active = (ja > 0, jb > 0, jc > 0)
         label = {
             (True, False, False): "Architecture",
             (False, True, False): "SNR",
@@ -75,6 +81,11 @@ def design_basis() -> tuple[np.ndarray, dict[str, list[int]], list[tuple[str, fl
 
 
 def holm_adjust(p_values: np.ndarray) -> np.ndarray:
+    p_values = np.asarray(p_values, dtype=float)
+    if p_values.ndim != 1 or len(p_values) == 0:
+        raise ValueError("p_values must be a nonempty one-dimensional array")
+    if not np.isfinite(p_values).all() or np.any((p_values < 0.0) | (p_values > 1.0)):
+        raise ValueError("p_values must be finite and lie in [0, 1]")
     order = np.argsort(p_values)
     adjusted = np.empty_like(p_values)
     running = 0.0
@@ -86,12 +97,17 @@ def holm_adjust(p_values: np.ndarray) -> np.ndarray:
 
 
 def multivariate_within_seed(frame: pd.DataFrame, metric: str, transform: str) -> pd.DataFrame:
+    if transform not in {"raw", "log"}:
+        raise ValueError("transform must be 'raw' or 'log'")
+    validate_factorial_frame(frame, [metric])
     design, effects, order = design_basis()
     subject_scores = []
     for _, block in frame.groupby("seed", sort=True):
         keyed = block.set_index(["architecture", "snr_db", "channel"])[metric]
         values = np.array([keyed.loc[key] for key in order], dtype=float)
         if transform == "log":
+            if np.any(values <= 0.0):
+                raise ValueError(f"{metric} must be positive for a log transform")
             values = np.log(values)
         subject_scores.append(design.T @ values)
     scores = np.asarray(subject_scores)
@@ -102,6 +118,8 @@ def multivariate_within_seed(frame: pd.DataFrame, metric: str, transform: str) -
         if values.ndim == 1:
             values = values[:, None]
         q = values.shape[1]
+        if n <= q:
+            raise ValueError(f"At least {q + 1} seed blocks are required for {effect}")
         mean = values.mean(axis=0)
         covariance = np.atleast_2d(np.cov(values, rowvar=False, ddof=1))
         covariance += np.eye(q) * np.finfo(float).eps
@@ -128,6 +146,16 @@ def multivariate_within_seed(frame: pd.DataFrame, metric: str, transform: str) -
 
 def main() -> None:
     frame = pd.read_csv(DATA / "joint_factorial_results.csv")
+    metadata = json.loads((DATA / "joint_experiment_metadata.json").read_text(encoding="utf-8"))
+    config = metadata["config"]
+    validate_factorial_frame(
+        frame,
+        FACTORIAL_METRICS,
+        expected_repetitions=int(metadata["repetitions_per_cell"]),
+        expected_snrs=config["snr_levels_db"],
+        expected_channels=config["channel_modes"],
+    )
+    summarize_cells(frame).to_csv(DATA / "joint_cell_summary.csv", index=False)
     responses = {
         "mse_frequency": "log",
         "phase_circular_rmse": "raw",
@@ -136,12 +164,18 @@ def main() -> None:
         "latency_ms_per_sample": "log",
     }
     effects = pd.concat(
-        [multivariate_within_seed(frame, metric, transform) for metric, transform in responses.items()],
+        [
+            multivariate_within_seed(frame, metric, transform)
+            for metric, transform in responses.items()
+        ],
         ignore_index=True,
     )
     effects.to_csv(DATA / "joint_factorial_effects.csv", index=False)
+    paired_contrasts(frame, responses).to_csv(DATA / "joint_paired_effects.csv", index=False)
 
-    architecture_means = frame.groupby("architecture")[list(responses)].mean().to_dict(orient="index")
+    architecture_means = (
+        frame.groupby("architecture")[list(responses)].mean().to_dict(orient="index")
+    )
     primary = effects[effects.response == "mse_frequency"].copy()
     summary = {
         "analysis": "Orthonormal-contrast multivariate repeated-measures analysis with trajectory seed as the block",
@@ -151,7 +185,9 @@ def main() -> None:
         "primary_effects": primary.to_dict(orient="records"),
         "warning": "This is simulation evidence and is not field or operational SIGINT validation.",
     }
-    (DATA / "joint_inference_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (DATA / "joint_inference_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

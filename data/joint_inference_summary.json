@@ -47,9 +47,9 @@
       "effect": "Channel",
       "df1": 2,
       "df2": 98,
-      "F": 21.149784063902896,
+      "F": 21.1497840639029,
       "p_value": 2.3137548077022522e-08,
-      "partial_eta_squared": 0.3014946424444659,
+      "partial_eta_squared": 0.30149464244446594,
       "p_holm_within_response": 1.6196283653915767e-07
     },
     {
@@ -69,9 +69,9 @@
       "effect": "Architecture \u00d7 Channel",
       "df1": 2,
       "df2": 98,
-      "F": 0.5787650147074673,
-      "p_value": 0.5624946573369649,
-      "partial_eta_squared": 0.011673647266844537,
+      "F": 0.5787650147074671,
+      "p_value": 0.562494657336965,
+      "partial_eta_squared": 0.011673647266844533,
       "p_holm_within_response": 1.0
     },
     {
@@ -80,10 +80,10 @@
       "effect": "SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 7.495839426869057,
-      "p_value": 2.6806428897272573e-05,
-      "partial_eta_squared": 0.23799459113556334,
-      "p_holm_within_response": 0.00013403214448636286
+      "F": 7.495839426869052,
+      "p_value": 2.6806428897272743e-05,
+      "partial_eta_squared": 0.2379945911355632,
+      "p_holm_within_response": 0.0001340321444863637
     },
     {
       "response": "mse_frequency",
@@ -91,9 +91,9 @@
       "effect": "Architecture \u00d7 SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 0.6111763568908534,
-      "p_value": 0.6555801784757266,
-      "partial_eta_squared": 0.0248332850095453,
+      "F": 0.6111763568908536,
+      "p_value": 0.6555801784757264,
+      "partial_eta_squared": 0.02483328500954531,
       "p_holm_within_response": 1.0
     }
   ],

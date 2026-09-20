@@ -6,6 +6,7 @@ pipeline invariants only; they are never represented as WiSig evidence.
 
 from __future__ import annotations
 
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,9 +15,13 @@ import numpy as np
 
 from src.signals_project.wisig_realdata import (
     build_overlap_manifest,
+    load_compact_dataset,
     materialize_overlaps,
+    prepare_dataset,
+    sha256_file,
     split_domains,
     validate_compact_dataset,
+    verify_file_sha256,
     write_manifest,
 )
 
@@ -91,6 +96,75 @@ class WiSigAdapterTests(unittest.TestCase):
             write_manifest(path, manifest)
             with path.open(encoding="utf-8") as handle:
                 self.assertEqual(sum(1 for _ in handle), len(manifest) + 1)
+
+    def test_invalid_manifest_parameters_fail_closed(self) -> None:
+        for value in (0, -1, 1.5, True):
+            with self.subTest(mixtures_per_domain=value):
+                with self.assertRaises(ValueError):
+                    build_overlap_manifest(self.dataset, mixtures_per_domain=value)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            build_overlap_manifest(self.dataset, sir_levels_db=(0.0, float("nan")))
+        with self.assertRaises(ValueError):
+            materialize_overlaps(self.dataset, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                write_manifest(Path(tmp) / "empty.csv", [])
+
+    def test_pickle_requires_acknowledgement_and_pre_unpickle_hash_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.pkl"
+            with path.open("wb") as handle:
+                pickle.dump(self.dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            digest = sha256_file(path)
+
+            with self.assertRaisesRegex(ValueError, "trust_official_pickle"):
+                load_compact_dataset(path, expected_sha256=digest)
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                load_compact_dataset(
+                    path,
+                    trust_official_pickle=True,
+                    expected_sha256="0" * 64,
+                )
+            loaded = load_compact_dataset(
+                path,
+                trust_official_pickle=True,
+                expected_sha256=digest,
+            )
+            self.assertEqual(loaded["tx_list"], self.dataset["tx_list"])
+
+    def test_prepare_dataset_cannot_bypass_pickle_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.pkl"
+            output = Path(tmp) / "derived"
+            with path.open("wb") as handle:
+                pickle.dump(self.dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            digest = sha256_file(path)
+            with self.assertRaisesRegex(ValueError, "trust_official_pickle"):
+                prepare_dataset(
+                    path,
+                    output,
+                    materialize=False,
+                    expected_sha256=digest,
+                )
+            metadata = prepare_dataset(
+                path,
+                output,
+                mixtures_per_domain=1,
+                materialize=False,
+                trust_official_pickle=True,
+                expected_sha256=digest,
+            )
+            self.assertEqual(metadata["dataset_sha256"], digest)
+            self.assertTrue(metadata["integrity_verified_before_unpickle"])
+
+    def test_hash_validation_rejects_invalid_contracts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "payload.bin"
+            path.write_bytes(b"fixture")
+            with self.assertRaises(ValueError):
+                sha256_file(path, block_size=0)
+            with self.assertRaises(ValueError):
+                verify_file_sha256(path, "not-a-sha256")
 
 
 if __name__ == "__main__":

@@ -84,10 +84,10 @@ reverse densities.
 The resample-move filter performs:
 
 1. joint transition propagation;
-2. exact convolution likelihood weighting;
+2. fixed-quadrature convolution likelihood weighting;
 3. stable normalization and particle-ESS calculation;
 4. systematic resampling below the ESS threshold or at a forced move time;
-5. one exact-target MALA rejuvenation step; and
+5. one same-target, numerically evaluated MALA rejuvenation step; and
 6. weighted posterior summaries.
 
 Particle ESS is an importance-weight diagnostic. It is not MCMC chain ESS, and
@@ -95,16 +95,17 @@ rank-normalized R-hat is not reported for a one-step rejuvenation kernel.
 
 ## Score architectures
 
-The analytical method uses the exact joint target gradient. The amortized
-method uses a SiLU random-feature network trained on independent exact score
-targets. Both methods use the exact configured target in the acceptance ratio.
+The analytical method differentiates the configured numerical joint target.
+The amortized method uses a SiLU random-feature network trained on independent
+scores from that target. Both methods use the same configured target in the
+acceptance ratio.
 Consequently, score approximation changes proposal efficiency, not the formal
 conditional target.
 
 ## Evidence scope
 
-The implementation and full factorial experiment establish operationally
-representative simulation validation. See
+The implementation and full factorial experiment establish controlled
+simulation validation. See
 `docs/OPERATIONAL_VALIDATION_PROTOCOL.md` for the evidence required before any
 field or operational validation statement is defensible.
 

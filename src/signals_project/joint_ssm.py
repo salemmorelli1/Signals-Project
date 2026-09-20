@@ -6,15 +6,17 @@ particle jointly carries amplitude, frequency, discrete hopping state, phase
 on the flat torus, latent complex multipath coefficients, and the source lag
 buffer required by tapped-delay propagation.
 
-Both score architectures use the same exact time-domain target.  The
+Both score architectures use the same configured time-domain target.  The
 analytical architecture differentiates the quadrature likelihood explicitly;
 the amortized architecture uses an independently trained SiLU random-feature
-network only to form MALA proposals.  Metropolis correction always evaluates
-the exact joint target and the actual forward/reverse proposal densities.
+network only to form MALA proposals. Metropolis correction always evaluates
+that same numerically evaluated target and the configured finite-lift
+forward/reverse proposal densities.
 
-The experiment is validation in an operationally representative simulation.
-It is not field or operational SIGINT validation; no real receiver recordings
-or independent operational test campaign are included.
+The experiment is controlled simulation validation. It is not field or
+operational SIGINT validation; no independent operational test campaign is
+included. A separately prepared WiSig lane contains hardware-captured source
+I/Q, but no WiSig inference result is claimed here.
 """
 
 from __future__ import annotations
@@ -23,16 +25,47 @@ import argparse
 import json
 import math
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.special import logsumexp
-
+from scipy.stats import t as student_t
 
 TWO_PI = 2.0 * math.pi
+ANALYTICAL_ARCHITECTURE = "Analytical joint score"
+SURROGATE_ARCHITECTURE = "Amortized joint surrogate"
+ARCHITECTURES = (ANALYTICAL_ARCHITECTURE, SURROGATE_ARCHITECTURE)
+SUPPORTED_CHANNEL_MODES = ("LOS", "MP", "NLOS")
+
+
+def _require_integer(name: str, value: object, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"{name} must be an integer")
+    integer = int(value)
+    if integer < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return integer
+
+
+def _require_finite(name: str, value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
+
+
+def _require_positive(name: str, value: Any) -> float:
+    number = _require_finite(name, value)
+    if number <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return number
 
 
 def stable_seed(*parts: object) -> int:
@@ -88,13 +121,100 @@ class JointConfig:
     surrogate_train_rows_per_mode: int = 900
     drift_clip: float = 120.0
 
+    def validate(self) -> None:
+        """Fail closed on unsupported or numerically invalid configurations."""
+        if _require_integer("emitters", self.emitters, minimum=1) != 2:
+            raise ValueError("This implementation supports exactly two emitters")
+        for name in (
+            "n_samples",
+            "hop_interval",
+            "particles",
+            "forced_move_interval",
+            "mala_steps",
+            "wrapped_lifts",
+            "surrogate_hidden",
+            "surrogate_train_rows_per_mode",
+        ):
+            _require_integer(name, getattr(self, name), minimum=1)
+        _require_integer("quadrature_nodes", self.quadrature_nodes, minimum=2)
+        if self.hop_interval > self.n_samples:
+            raise ValueError("hop_interval cannot exceed n_samples")
+        if self.forced_move_interval > self.n_samples:
+            raise ValueError("forced_move_interval cannot exceed n_samples")
+
+        _require_positive("sample_rate_hz", self.sample_rate_hz)
+        for name in (
+            "logamp_sd",
+            "frequency_sd",
+            "phase_sd",
+            "channel_sd",
+            "cauchy_standard_bound",
+            "drift_clip",
+        ):
+            _require_positive(name, getattr(self, name))
+        _require_finite("logamp_mean", self.logamp_mean)
+        ridge = _require_finite("surrogate_ridge", self.surrogate_ridge)
+        if ridge < 0.0:
+            raise ValueError("surrogate_ridge cannot be negative")
+
+        unit_closed = ("hop_probability", "logamp_reversion")
+        for name in unit_closed:
+            value = _require_finite(name, getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must lie in [0, 1]")
+        resample_fraction = _require_finite("resample_fraction", self.resample_fraction)
+        if not 0.0 < resample_fraction <= 1.0:
+            raise ValueError("resample_fraction must lie in (0, 1]")
+        for name in ("frequency_rho", "channel_rho"):
+            value = _require_finite(name, getattr(self, name))
+            if not 0.0 <= value < 1.0:
+                raise ValueError(f"{name} must lie in [0, 1)")
+        cauchy_fraction = _require_finite("cauchy_variance_fraction", self.cauchy_variance_fraction)
+        if not 0.0 < cauchy_fraction < 1.0:
+            raise ValueError("cauchy_variance_fraction must lie in (0, 1)")
+
+        if not self.snr_levels_db:
+            raise ValueError("snr_levels_db cannot be empty")
+        snrs = tuple(_require_finite("snr_levels_db entry", value) for value in self.snr_levels_db)
+        if len(set(snrs)) != len(snrs):
+            raise ValueError("snr_levels_db entries must be unique")
+        if self.surrogate_train_rows_per_mode < len(snrs):
+            raise ValueError("surrogate_train_rows_per_mode must cover every SNR level")
+
+        if not self.channel_modes or len(set(self.channel_modes)) != len(self.channel_modes):
+            raise ValueError("channel_modes must be nonempty and unique")
+        unknown_modes = set(self.channel_modes) - set(SUPPORTED_CHANNEL_MODES)
+        if unknown_modes:
+            raise ValueError(f"Unsupported channel modes: {sorted(unknown_modes)}")
+
+        alphabets: list[np.ndarray] = []
+        for name, raw in (
+            ("emitter1_channels_hz", self.emitter1_channels_hz),
+            ("emitter2_channels_hz", self.emitter2_channels_hz),
+        ):
+            values = np.asarray(raw, dtype=float)
+            if values.ndim != 1 or len(values) < 2:
+                raise ValueError(f"{name} must contain at least two channels")
+            if not np.isfinite(values).all() or np.any(values <= 0.0):
+                raise ValueError(f"{name} must contain positive finite channels")
+            if np.any(values >= self.sample_rate_hz / 2.0):
+                raise ValueError(f"{name} must remain strictly below Nyquist")
+            if len(np.unique(values)) != len(values):
+                raise ValueError(f"{name} entries must be unique")
+            alphabets.append(values)
+        if not set(alphabets[0]).intersection(alphabets[1]):
+            raise ValueError("The two channel alphabets must share a co-channel frequency")
+
     @property
     def dt(self) -> float:
         return 1.0 / self.sample_rate_hz
 
     @property
     def channel_alphabets(self) -> tuple[np.ndarray, np.ndarray]:
-        return (np.asarray(self.emitter1_channels_hz), np.asarray(self.emitter2_channels_hz))
+        return (
+            np.asarray(self.emitter1_channels_hz, dtype=float),
+            np.asarray(self.emitter2_channels_hz, dtype=float),
+        )
 
 
 @dataclass(frozen=True)
@@ -141,9 +261,10 @@ class ConvolutionNoise:
     """Independent Gaussian plus truncated-Cauchy noise for one real component."""
 
     def __init__(self, sigma_g: float, gamma: float, bound: float, nodes: int):
-        self.sigma_g = float(sigma_g)
-        self.gamma = float(gamma)
-        self.bound = float(bound)
+        self.sigma_g = _require_positive("sigma_g", sigma_g)
+        self.gamma = _require_positive("gamma", gamma)
+        self.bound = _require_positive("bound", bound)
+        nodes = _require_integer("nodes", nodes, minimum=2)
         x, w = np.polynomial.legendre.leggauss(nodes)
         self.tau = self.bound * x
         qweights = self.bound * w
@@ -153,11 +274,20 @@ class ConvolutionNoise:
             * math.atan(self.bound / self.gamma)
             * (1.0 + (self.tau / self.gamma) ** 2)
         )
-        self.log_base = np.log(qweights) + log_pc - math.log(self.sigma_g * math.sqrt(2.0 * math.pi))
+        self.log_base = (
+            np.log(qweights) + log_pc - math.log(self.sigma_g * math.sqrt(2.0 * math.pi))
+        )
 
     @classmethod
-    def from_signal_power(cls, signal_power: float, snr_db: float, cfg: JointConfig) -> "ConvolutionNoise":
+    def from_signal_power(
+        cls, signal_power: float, snr_db: float, cfg: JointConfig
+    ) -> ConvolutionNoise:
+        cfg.validate()
+        signal_power = _require_positive("signal_power", signal_power)
+        snr_db = _require_finite("snr_db", snr_db)
         total_complex_variance = signal_power / (10.0 ** (snr_db / 10.0))
+        if not math.isfinite(total_complex_variance) or total_complex_variance <= 0.0:
+            raise ValueError("signal_power and snr_db produce invalid noise variance")
         component_variance = max(total_complex_variance / 2.0, 1e-8)
         gaussian_variance = (1.0 - cfg.cauchy_variance_fraction) * component_variance
         cauchy_variance = cfg.cauchy_variance_fraction * component_variance
@@ -175,8 +305,12 @@ class ConvolutionNoise:
     def sample_complex(self, rng: np.random.Generator, size: int | tuple[int, ...]) -> np.ndarray:
         return self.sample_real(rng, size) + 1j * self.sample_real(rng, size)
 
-    def log_prob_score_real(self, residual: np.ndarray, need_score: bool = True) -> tuple[np.ndarray, np.ndarray | None]:
+    def log_prob_score_real(
+        self, residual: np.ndarray, need_score: bool = True
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         r = np.asarray(residual, dtype=float)
+        if not np.isfinite(r).all():
+            raise ValueError("residual must contain only finite values")
         expanded = r[..., None] - self.tau
         log_terms = self.log_base - 0.5 * (expanded / self.sigma_g) ** 2
         logp = logsumexp(log_terms, axis=-1)
@@ -186,11 +320,14 @@ class ConvolutionNoise:
         score = np.sum(posterior_weights * (-expanded / self.sigma_g**2), axis=-1)
         return logp, score
 
-    def log_prob_complex(self, residual: np.ndarray, need_score: bool = True) -> tuple[np.ndarray, np.ndarray | None]:
+    def log_prob_complex(
+        self, residual: np.ndarray, need_score: bool = True
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         lr, sr = self.log_prob_score_real(np.real(residual), need_score)
         li, si = self.log_prob_score_real(np.imag(residual), need_score)
         if not need_score:
             return lr + li, None
+        assert sr is not None and si is not None
         return lr + li, sr + 1j * si
 
     def component_variance(self) -> float:
@@ -206,7 +343,13 @@ def wrapped_normal_logpdf_score(
     lifts: int,
     need_score: bool = True,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    delta = wrap_difference(np.asarray(value_minus_location) - np.asarray(mean_shift))
+    sd = _require_positive("sd", sd)
+    lifts = _require_integer("lifts", lifts, minimum=0)
+    difference = np.asarray(value_minus_location, dtype=float)
+    shift = np.asarray(mean_shift, dtype=float)
+    if not np.isfinite(difference).all() or not np.isfinite(shift).all():
+        raise ValueError("wrapped-normal inputs must be finite")
+    delta = wrap_difference(difference - shift)
     winding = np.arange(-lifts, lifts + 1, dtype=float) * TWO_PI
     lifted = delta[..., None] + winding
     log_terms = -0.5 * (lifted / sd) ** 2 - math.log(sd * math.sqrt(2.0 * math.pi))
@@ -218,7 +361,9 @@ def wrapped_normal_logpdf_score(
     return logp, score_delta
 
 
-def channel_transition_mean(previous: np.ndarray, spec: ChannelSpec, cfg: JointConfig) -> np.ndarray:
+def channel_transition_mean(
+    previous: np.ndarray, spec: ChannelSpec, cfg: JointConfig
+) -> np.ndarray:
     return cfg.channel_rho * previous + (1.0 - cfg.channel_rho) * spec.means[None, :, :]
 
 
@@ -237,7 +382,9 @@ def frequency_transition_mean(
     return means
 
 
-def source_prediction(state: dict[str, np.ndarray], spec: ChannelSpec) -> tuple[np.ndarray, np.ndarray]:
+def source_prediction(
+    state: dict[str, np.ndarray], spec: ChannelSpec
+) -> tuple[np.ndarray, np.ndarray]:
     current_source = np.exp(state["logamp"] + 1j * state["phase"])
     histories = state["history"].copy()
     histories[:, :, 0] = current_source
@@ -247,7 +394,14 @@ def source_prediction(state: dict[str, np.ndarray], spec: ChannelSpec) -> tuple[
     return prediction, histories
 
 
-def simulate_joint_trajectory(seed: int, snr_db: float, mode: str, cfg: JointConfig) -> dict[str, np.ndarray | float]:
+def simulate_joint_trajectory(
+    seed: int, snr_db: float, mode: str, cfg: JointConfig
+) -> dict[str, Any]:
+    cfg.validate()
+    _require_integer("seed", seed, minimum=0)
+    _require_finite("snr_db", snr_db)
+    if mode not in cfg.channel_modes:
+        raise ValueError(f"mode {mode!r} is not enabled in channel_modes")
     rng = np.random.default_rng(stable_seed("joint-physics", seed, snr_db, mode))
     spec = channel_spec(mode)
     n, k, r = cfg.n_samples, cfg.emitters, spec.taps
@@ -347,7 +501,9 @@ def pack_state(state: dict[str, np.ndarray], spec: ChannelSpec) -> np.ndarray:
     )
 
 
-def unpack_state(packed: np.ndarray, template: dict[str, np.ndarray], spec: ChannelSpec) -> dict[str, np.ndarray]:
+def unpack_state(
+    packed: np.ndarray, template: dict[str, np.ndarray], spec: ChannelSpec
+) -> dict[str, np.ndarray]:
     p = len(packed)
     kr = 2 * spec.taps
     state = copy_state(template)
@@ -392,7 +548,6 @@ def transition_target(
     cfg: JointConfig,
     need_score: bool,
 ) -> tuple[np.ndarray, dict[str, np.ndarray] | None, np.ndarray]:
-    p = len(candidate["logamp"])
     prediction, histories = source_prediction(candidate, spec)
     residual = observation - prediction
     log_lik, residual_score = noise.log_prob_complex(residual, need_score)
@@ -419,6 +574,7 @@ def transition_target(
     )
     if not need_score:
         return log_target, None, prediction
+    assert phase_score is not None and residual_score is not None
 
     score = {
         "logamp": -amp_residual / cfg.logamp_sd**2,
@@ -437,32 +593,35 @@ def transition_target(
         delayed_source = histories[:, :, delay]
         derivative_real_h = delayed_source
         derivative_imag_h = 1j * delayed_source
-        score["channel"].real[:, :, tap] += (
-            np.real(pred_score)[:, None] * np.real(derivative_real_h)
-            + np.imag(pred_score)[:, None] * np.imag(derivative_real_h)
-        )
-        score["channel"].imag[:, :, tap] += (
-            np.real(pred_score)[:, None] * np.real(derivative_imag_h)
-            + np.imag(pred_score)[:, None] * np.imag(derivative_imag_h)
-        )
+        score["channel"].real[:, :, tap] += np.real(pred_score)[:, None] * np.real(
+            derivative_real_h
+        ) + np.imag(pred_score)[:, None] * np.imag(derivative_real_h)
+        score["channel"].imag[:, :, tap] += np.real(pred_score)[:, None] * np.real(
+            derivative_imag_h
+        ) + np.imag(pred_score)[:, None] * np.imag(derivative_imag_h)
         if delay == 0:
             derivative_amp = candidate["channel"][:, :, tap] * current_source
             derivative_phase = 1j * derivative_amp
-            score["logamp"] += (
-                np.real(pred_score)[:, None] * np.real(derivative_amp)
-                + np.imag(pred_score)[:, None] * np.imag(derivative_amp)
-            )
-            score["phase"] += (
-                np.real(pred_score)[:, None] * np.real(derivative_phase)
-                + np.imag(pred_score)[:, None] * np.imag(derivative_phase)
-            )
+            score["logamp"] += np.real(pred_score)[:, None] * np.real(derivative_amp) + np.imag(
+                pred_score
+            )[:, None] * np.imag(derivative_amp)
+            score["phase"] += np.real(pred_score)[:, None] * np.real(derivative_phase) + np.imag(
+                pred_score
+            )[:, None] * np.imag(derivative_phase)
     return log_target, score, prediction
 
 
 class JointScoreSurrogate:
-    """SiLU random-feature network trained against exact joint target scores."""
+    """SiLU random-feature network trained against configured target scores."""
 
     def __init__(self, input_dim: int, output_dim: int, hidden: int, ridge: float, seed: int):
+        input_dim = _require_integer("input_dim", input_dim, minimum=1)
+        output_dim = _require_integer("output_dim", output_dim, minimum=1)
+        hidden = _require_integer("hidden", hidden, minimum=1)
+        ridge = _require_finite("ridge", ridge)
+        if ridge < 0.0:
+            raise ValueError("ridge cannot be negative")
+        _require_integer("seed", seed, minimum=0)
         rng = np.random.default_rng(seed)
         self.w = rng.normal(scale=0.62, size=(input_dim, hidden))
         self.b = rng.normal(scale=0.28, size=hidden)
@@ -478,7 +637,13 @@ class JointScoreSurrogate:
         z = np.clip(x, -35.0, 35.0)
         return z / (1.0 + np.exp(-z))
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> "JointScoreSurrogate":
+    def fit(self, x: np.ndarray, y: np.ndarray) -> JointScoreSurrogate:
+        if x.ndim != 2 or y.ndim != 2 or len(x) != len(y) or len(x) < 2:
+            raise ValueError("x and y must be aligned two-dimensional training arrays")
+        if x.shape[1] != self.w.shape[0] or y.shape[1] != self.beta.shape[1]:
+            raise ValueError("Training arrays do not match surrogate dimensions")
+        if not np.isfinite(x).all() or not np.isfinite(y).all():
+            raise ValueError("Surrogate training arrays must be finite")
         self.x_mean = x.mean(axis=0)
         self.x_scale = x.std(axis=0) + 1e-8
         self.y_mean = y.mean(axis=0)
@@ -493,6 +658,10 @@ class JointScoreSurrogate:
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
+        if x.ndim != 2 or x.shape[1] != self.w.shape[0]:
+            raise ValueError("Prediction array does not match surrogate input dimension")
+        if not np.isfinite(x).all():
+            raise ValueError("Surrogate prediction array must be finite")
         xs = (x - self.x_mean) / self.x_scale
         hidden = self.silu(xs @ self.w + self.b)
         design = np.column_stack([np.ones(len(hidden)), hidden])
@@ -557,9 +726,13 @@ def surrogate_output_pad(score: dict[str, np.ndarray], spec: ChannelSpec) -> np.
     padded[:, :, : spec.taps] = score["channel"]
     return np.concatenate(
         [
-            score["logamp"], score["frequency"], score["phase"],
-            np.real(padded).reshape(p, -1), np.imag(padded).reshape(p, -1),
-        ], axis=1,
+            score["logamp"],
+            score["frequency"],
+            score["phase"],
+            np.real(padded).reshape(p, -1),
+            np.imag(padded).reshape(p, -1),
+        ],
+        axis=1,
     )
 
 
@@ -567,9 +740,7 @@ def surrogate_output_unpad(output: np.ndarray, spec: ChannelSpec) -> np.ndarray:
     p = len(output)
     real_h = output[:, 6:10].reshape(p, 2, 2)[:, :, : spec.taps]
     imag_h = output[:, 10:14].reshape(p, 2, 2)[:, :, : spec.taps]
-    return np.concatenate(
-        [output[:, :6], real_h.reshape(p, -1), imag_h.reshape(p, -1)], axis=1
-    )
+    return np.concatenate([output[:, :6], real_h.reshape(p, -1), imag_h.reshape(p, -1)], axis=1)
 
 
 def random_training_block(
@@ -579,6 +750,7 @@ def random_training_block(
     rows: int,
     cfg: JointConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
+    _require_integer("rows", rows, minimum=1)
     spec = channel_spec(mode)
     p = rows
     previous: dict[str, np.ndarray] = {
@@ -618,12 +790,14 @@ def random_training_block(
     noise = ConvolutionNoise.from_signal_power(signal_power, snr_db, cfg)
     observation = source_prediction(candidate, spec)[0] + noise.sample_complex(rng, p)
     _, score, _ = transition_target(candidate, previous, observation, noise, spec, cfg, True)
+    assert score is not None
     x = surrogate_features(candidate, previous, observation, noise, spec, cfg)
     y = surrogate_output_pad(score, spec)
     return x, y
 
 
 def train_joint_surrogate(cfg: JointConfig) -> tuple[JointScoreSurrogate, dict[str, float]]:
+    cfg.validate()
     rng = np.random.default_rng(31977)
     x_parts, y_parts = [], []
     for mode in cfg.channel_modes:
@@ -632,20 +806,47 @@ def train_joint_surrogate(cfg: JointConfig) -> tuple[JointScoreSurrogate, dict[s
         for snr in cfg.snr_levels_db:
             rows = int(np.sum(snr_values == snr))
             x, y = random_training_block(rng, mode, float(snr), rows, cfg)
-            x_parts.append(x); y_parts.append(y)
-    x = np.vstack(x_parts); y = np.vstack(y_parts)
-    order = rng.permutation(len(x)); split = int(0.82 * len(x))
+            x_parts.append(x)
+            y_parts.append(y)
+    x = np.vstack(x_parts)
+    y = np.vstack(y_parts)
+    order = rng.permutation(len(x))
+    split = int(0.82 * len(x))
     train, valid = order[:split], order[split:]
-    model = JointScoreSurrogate(x.shape[1], y.shape[1], cfg.surrogate_hidden, cfg.surrogate_ridge, 41821)
+    model = JointScoreSurrogate(
+        x.shape[1], y.shape[1], cfg.surrogate_hidden, cfg.surrogate_ridge, 41821
+    )
     model.fit(x[train], y[train])
     pred = model.predict(x[valid])
     rmse = float(np.sqrt(np.mean((pred - y[valid]) ** 2)))
     corr = float(np.corrcoef(pred.ravel(), y[valid].ravel())[0, 1])
-    return model, {"validation_score_rmse": rmse, "validation_score_correlation": corr, "training_rows": int(len(train)), "validation_rows": int(len(valid))}
+    if not math.isfinite(rmse) or not math.isfinite(corr):
+        raise RuntimeError("Surrogate validation produced non-finite diagnostics")
+    return model, {
+        "validation_score_rmse": rmse,
+        "validation_score_correlation": corr,
+        "training_rows": len(train),
+        "validation_rows": len(valid),
+    }
 
 
 class JointParticleFilter:
-    def __init__(self, cfg: JointConfig, mode: str, architecture: str, surrogate: JointScoreSurrogate | None, seed: int):
+    def __init__(
+        self,
+        cfg: JointConfig,
+        mode: str,
+        architecture: str,
+        surrogate: JointScoreSurrogate | None,
+        seed: int,
+    ):
+        cfg.validate()
+        if mode not in cfg.channel_modes:
+            raise ValueError(f"mode {mode!r} is not enabled in channel_modes")
+        if architecture not in ARCHITECTURES:
+            raise ValueError(f"Unsupported architecture {architecture!r}")
+        if architecture == SURROGATE_ARCHITECTURE and surrogate is None:
+            raise ValueError("The amortized architecture requires a fitted surrogate")
+        _require_integer("seed", seed, minimum=0)
         self.cfg = cfg
         self.spec = channel_spec(mode)
         self.architecture = architecture
@@ -659,12 +860,15 @@ class JointParticleFilter:
             "frequency": np.zeros((p, k)),
             "z": np.zeros((p, k), dtype=int),
             "phase": self.rng.uniform(0.0, TWO_PI, size=(p, k)),
-            "channel": self.spec.means[None, :, :] + complex_normal(self.rng, (p, k, self.spec.taps), 0.24),
+            "channel": self.spec.means[None, :, :]
+            + complex_normal(self.rng, (p, k, self.spec.taps), 0.24),
             "history": np.zeros((p, k, self.spec.max_delay + 1), dtype=np.complex128),
         }
         for emitter, alphabet in enumerate(self.cfg.channel_alphabets):
             state["z"][:, emitter] = self.rng.integers(len(alphabet), size=p)
-            state["frequency"][:, emitter] = alphabet[state["z"][:, emitter]] + self.rng.normal(scale=1.0, size=p)
+            state["frequency"][:, emitter] = alphabet[state["z"][:, emitter]] + self.rng.normal(
+                scale=1.0, size=p
+            )
         state["history"][:, :, 0] = np.exp(state["logamp"] + 1j * state["phase"])
         return state
 
@@ -700,12 +904,18 @@ class JointParticleFilter:
         observation: complex,
         noise: ConvolutionNoise,
     ) -> tuple[np.ndarray, np.ndarray]:
-        if self.architecture == "Analytical joint score":
-            target, score, _ = transition_target(state, previous, observation, noise, self.spec, self.cfg, True)
+        if self.architecture == ANALYTICAL_ARCHITECTURE:
+            target, score, _ = transition_target(
+                state, previous, observation, noise, self.spec, self.cfg, True
+            )
+            assert score is not None
             packed = pack_score(score, self.spec)
-        elif self.architecture == "Amortized joint surrogate":
-            target, _, _ = transition_target(state, previous, observation, noise, self.spec, self.cfg, False)
+        elif self.architecture == SURROGATE_ARCHITECTURE:
+            target, _, _ = transition_target(
+                state, previous, observation, noise, self.spec, self.cfg, False
+            )
             features = surrogate_features(state, previous, observation, noise, self.spec, self.cfg)
+            assert self.surrogate is not None
             packed = surrogate_output_unpad(self.surrogate.predict(features), self.spec)
         else:
             raise ValueError(self.architecture)
@@ -734,18 +944,33 @@ class JointParticleFilter:
             prop_target, prop_score = self.proposal_score(proposal, previous, observation, noise)
             prop_shift = 0.5 * steps**2 * prop_score
 
-            delta_forward = raw[:, euclidean_columns] - x[:, euclidean_columns] - shift[:, euclidean_columns]
-            delta_reverse = x[:, euclidean_columns] - raw[:, euclidean_columns] - prop_shift[:, euclidean_columns]
+            delta_forward = (
+                raw[:, euclidean_columns] - x[:, euclidean_columns] - shift[:, euclidean_columns]
+            )
+            delta_reverse = (
+                x[:, euclidean_columns]
+                - raw[:, euclidean_columns]
+                - prop_shift[:, euclidean_columns]
+            )
             logq_forward = np.sum(normal_logpdf(delta_forward, steps[euclidean_columns]), axis=1)
             logq_reverse = np.sum(normal_logpdf(delta_reverse, steps[euclidean_columns]), axis=1)
             for column in phase_columns:
                 lf, _ = wrapped_normal_logpdf_score(
-                    raw[:, column] - x[:, column], shift[:, column], steps[column], cfg.wrapped_lifts, False
+                    raw[:, column] - x[:, column],
+                    shift[:, column],
+                    steps[column],
+                    cfg.wrapped_lifts,
+                    False,
                 )
                 lr, _ = wrapped_normal_logpdf_score(
-                    x[:, column] - raw[:, column], prop_shift[:, column], steps[column], cfg.wrapped_lifts, False
+                    x[:, column] - raw[:, column],
+                    prop_shift[:, column],
+                    steps[column],
+                    cfg.wrapped_lifts,
+                    False,
                 )
-                logq_forward += lf; logq_reverse += lr
+                logq_forward += lf
+                logq_reverse += lr
             log_alpha = prop_target - target + logq_reverse - logq_forward
             accept = np.log(self.rng.random(len(x))) < np.minimum(0.0, log_alpha)
             accepted_total += int(np.sum(accept))
@@ -753,7 +978,16 @@ class JointParticleFilter:
                 current[key][accept] = proposal[key][accept]
         return current, accepted_total / (len(state["logamp"]) * cfg.mala_steps)
 
-    def run(self, observation: np.ndarray, noise: ConvolutionNoise) -> dict[str, np.ndarray | float]:
+    def run(self, observation: np.ndarray, noise: ConvolutionNoise) -> dict[str, Any]:
+        observation = np.asarray(observation, dtype=np.complex128)
+        if observation.ndim != 1 or len(observation) != self.cfg.n_samples:
+            raise ValueError(
+                f"observation must be one-dimensional with {self.cfg.n_samples} samples"
+            )
+        if not np.isfinite(observation).all():
+            raise ValueError("observation must contain only finite values")
+        if not isinstance(noise, ConvolutionNoise):
+            raise TypeError("noise must be a ConvolutionNoise instance")
         cfg, p = self.cfg, cfg_particles(self.cfg)
         state = self.initialize()
         log_weights = np.full(p, -math.log(p))
@@ -810,20 +1044,37 @@ def circular_rmse(estimate: np.ndarray, truth: np.ndarray) -> float:
 def channel_nmse(estimate: np.ndarray, truth: np.ndarray) -> float:
     numerator = np.mean(np.abs(estimate - truth) ** 2)
     denominator = np.mean(np.abs(truth) ** 2)
+    if not math.isfinite(float(denominator)) or denominator <= 0.0:
+        raise ValueError("Channel truth must have positive finite energy")
     return float(numerator / denominator)
 
 
 def evaluate_run(
-    truth: dict[str, np.ndarray | float],
-    output: dict[str, np.ndarray | float],
+    truth: dict[str, Any],
+    output: dict[str, Any],
     burn: int,
 ) -> dict[str, float]:
+    burn = _require_integer("burn", burn, minimum=0)
+    n_samples = len(np.asarray(truth["frequency"]))
+    if burn >= n_samples:
+        raise ValueError("burn must leave at least one evaluation sample")
+    for key in ("frequency", "phase", "channel"):
+        truth_value = np.asarray(truth[key])
+        output_value = np.asarray(output[key])
+        if truth_value.shape != output_value.shape:
+            raise ValueError(f"Truth and output shapes differ for {key}")
+        if not np.isfinite(truth_value).all() or not np.isfinite(output_value).all():
+            raise ValueError(f"Truth and output must be finite for {key}")
     sl = slice(burn, None)
     freq_error = np.asarray(output["frequency"])[sl] - np.asarray(truth["frequency"])[sl]
     return {
         "mse_frequency": float(np.mean(np.sum(freq_error**2, axis=1))),
-        "phase_circular_rmse": circular_rmse(np.asarray(output["phase"])[sl], np.asarray(truth["phase"])[sl]),
-        "channel_nmse": channel_nmse(np.asarray(output["channel"])[sl], np.asarray(truth["channel"])[sl]),
+        "phase_circular_rmse": circular_rmse(
+            np.asarray(output["phase"])[sl], np.asarray(truth["phase"])[sl]
+        ),
+        "channel_nmse": channel_nmse(
+            np.asarray(output["channel"])[sl], np.asarray(truth["channel"])[sl]
+        ),
         "particle_ess_mean": float(np.mean(np.asarray(output["particle_ess"])[sl])),
         "unique_ancestor_mean": float(np.mean(np.asarray(output["unique_ancestors"]))),
         "mala_acceptance": float(output["mala_acceptance"]),
@@ -832,7 +1083,93 @@ def evaluate_run(
     }
 
 
+FACTORIAL_METRICS = (
+    "mse_frequency",
+    "phase_circular_rmse",
+    "channel_nmse",
+    "particle_ess_mean",
+    "unique_ancestor_mean",
+    "mala_acceptance",
+    "resampling_count",
+    "latency_ms_per_sample",
+    "achieved_snr_db",
+)
+
+
+def validate_factorial_frame(
+    frame: pd.DataFrame,
+    metrics: Iterable[str] = FACTORIAL_METRICS,
+    *,
+    expected_repetitions: int | None = None,
+    expected_snrs: Iterable[float] | None = None,
+    expected_channels: Iterable[str] | None = None,
+) -> None:
+    """Validate the paired factorial contract before any aggregation or test."""
+    metric_names = tuple(metrics)
+    if not metric_names or len(set(metric_names)) != len(metric_names):
+        raise ValueError("metrics must be nonempty and unique")
+    keys = ("seed", "architecture", "snr_db", "channel")
+    required = set(keys).union(metric_names)
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"Factorial frame is missing columns: {', '.join(missing)}")
+    if frame.empty:
+        raise ValueError("Factorial frame cannot be empty")
+    if frame.duplicated(list(keys)).any():
+        raise ValueError("Factorial frame contains duplicate design rows")
+
+    seed_values = pd.to_numeric(frame["seed"], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(seed_values).all() or not np.equal(seed_values, np.floor(seed_values)).all():
+        raise ValueError("seed values must be finite integers")
+    seeds = sorted(int(value) for value in np.unique(seed_values))
+    if seeds != list(range(seeds[-1] + 1)):
+        raise ValueError("seed values must be a contiguous zero-based sequence")
+    if expected_repetitions is not None:
+        repetitions = _require_integer("expected_repetitions", expected_repetitions, minimum=1)
+        if seeds != list(range(repetitions)):
+            raise ValueError("Factorial frame does not match expected repetitions")
+
+    architectures = set(frame["architecture"].astype(str))
+    if architectures != set(ARCHITECTURES):
+        raise ValueError(f"Expected architectures {ARCHITECTURES}; found {sorted(architectures)}")
+    snrs = sorted(float(value) for value in frame["snr_db"].unique())
+    if not snrs or not np.isfinite(snrs).all():
+        raise ValueError("snr_db levels must be finite and nonempty")
+    channels = sorted(str(value) for value in frame["channel"].unique())
+    if not channels:
+        raise ValueError("channel levels cannot be empty")
+    if expected_snrs is not None and set(snrs) != {
+        _require_finite("expected SNR", value) for value in expected_snrs
+    }:
+        raise ValueError("Factorial frame does not match expected SNR levels")
+    if expected_channels is not None and set(channels) != {
+        str(value) for value in expected_channels
+    }:
+        raise ValueError("Factorial frame does not match expected channel levels")
+
+    expected_rows = len(seeds) * len(ARCHITECTURES) * len(snrs) * len(channels)
+    if len(frame) != expected_rows:
+        raise ValueError(
+            f"Incomplete factorial design: expected {expected_rows} rows, found {len(frame)}"
+        )
+    counts = frame.groupby(["seed", "snr_db", "channel"], observed=True)["architecture"].nunique()
+    if not (counts == len(ARCHITECTURES)).all():
+        raise ValueError("Every physical trajectory must contain both architectures")
+
+    numeric = frame.loc[:, ["snr_db", *metric_names]].apply(pd.to_numeric, errors="coerce")
+    if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+        raise ValueError("Factorial design metrics must be finite and numeric")
+    nonnegative = set(metric_names) - {"achieved_snr_db"}
+    for metric in nonnegative:
+        if (numeric[metric] < 0.0).any():
+            raise ValueError(f"{metric} cannot be negative")
+    if "mala_acceptance" in metric_names and not numeric["mala_acceptance"].between(0.0, 1.0).all():
+        raise ValueError("mala_acceptance must lie in [0, 1]")
+
+
 def paired_contrasts(frame: pd.DataFrame, metrics: Iterable[str]) -> pd.DataFrame:
+    metrics = tuple(metrics)
+    validate_factorial_frame(frame, metrics)
     key = ["seed", "snr_db", "channel"]
     wide = frame.pivot(index=key, columns="architecture", values=list(metrics))
     rows: list[dict[str, object]] = []
@@ -844,26 +1181,36 @@ def paired_contrasts(frame: pd.DataFrame, metrics: Iterable[str]) -> pd.DataFram
     for group, level, mask in groups:
         sub = wide[mask]
         for metric in metrics:
-            delta = sub[(metric, "Amortized joint surrogate")] - sub[(metric, "Analytical joint score")]
-            se = delta.std(ddof=1) / math.sqrt(len(delta))
-            rows.append({
-                "group": group,
-                "level": level,
-                "metric": metric,
-                "n_pairs": len(delta),
-                "mean_difference_surrogate_minus_analytical": delta.mean(),
-                "ci95_low": delta.mean() - 1.96 * se,
-                "ci95_high": delta.mean() + 1.96 * se,
-            })
+            delta = sub[(metric, SURROGATE_ARCHITECTURE)] - sub[(metric, ANALYTICAL_ARCHITECTURE)]
+            if not np.isfinite(delta.to_numpy(dtype=float)).all():
+                raise ValueError(f"Invalid paired contrast for {group}={level}, metric={metric}")
+            block_means = delta.groupby(level="seed").mean()
+            n_blocks = len(block_means)
+            if n_blocks < 2:
+                raise ValueError(
+                    "At least two independent seed profiles are required for intervals"
+                )
+            mean_difference = float(block_means.mean())
+            se = float(block_means.std(ddof=1) / math.sqrt(n_blocks))
+            critical = float(student_t.ppf(0.975, df=n_blocks - 1))
+            rows.append(
+                {
+                    "group": group,
+                    "level": level,
+                    "metric": metric,
+                    "n_pairs": len(delta),
+                    "n_blocks": n_blocks,
+                    "mean_difference_surrogate_minus_analytical": mean_difference,
+                    "ci95_low": mean_difference - critical * se,
+                    "ci95_high": mean_difference + critical * se,
+                }
+            )
     return pd.DataFrame(rows)
 
 
 def summarize_cells(frame: pd.DataFrame) -> pd.DataFrame:
-    metrics = [
-        "mse_frequency", "phase_circular_rmse", "channel_nmse",
-        "particle_ess_mean", "unique_ancestor_mean", "mala_acceptance",
-        "resampling_count", "latency_ms_per_sample", "achieved_snr_db",
-    ]
+    metrics = list(FACTORIAL_METRICS)
+    validate_factorial_frame(frame, metrics)
     grouped = frame.groupby(["architecture", "snr_db", "channel"])
     pieces = [grouped.size().rename("n")]
     for metric in metrics:
@@ -873,10 +1220,13 @@ def summarize_cells(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
+    cfg.validate()
+    repetitions = _require_integer("repetitions", repetitions, minimum=2)
+    if cfg.n_samples <= cfg.hop_interval:
+        raise ValueError("n_samples must exceed hop_interval for post-burn evaluation")
     output.mkdir(parents=True, exist_ok=True)
     surrogate, validation = train_joint_surrogate(cfg)
     surrogate.save(output / "joint_surrogate_weights.npz", validation)
-    architectures = ("Analytical joint score", "Amortized joint surrogate")
     rows: list[dict[str, object]] = []
     example_rows: list[dict[str, object]] = []
     total = repetitions * len(cfg.snr_levels_db) * len(cfg.channel_modes)
@@ -885,45 +1235,73 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
         for snr in cfg.snr_levels_db:
             for mode in cfg.channel_modes:
                 truth = simulate_joint_trajectory(seed, snr, mode, cfg)
-                for architecture in architectures:
+                for architecture in ARCHITECTURES:
                     engine = JointParticleFilter(
-                        cfg, mode, architecture, surrogate if "surrogate" in architecture.lower() else None,
+                        cfg,
+                        mode,
+                        architecture,
+                        surrogate if architecture == SURROGATE_ARCHITECTURE else None,
                         stable_seed("joint-inference", seed, snr, mode, architecture),
                     )
                     result = engine.run(np.asarray(truth["observation"]), truth["noise_law"])
                     metrics = evaluate_run(truth, result, burn=cfg.hop_interval)
-                    rows.append({
-                        "seed": seed, "architecture": architecture, "snr_db": snr,
-                        "channel": mode, "achieved_snr_db": truth["achieved_snr_db"], **metrics,
-                    })
+                    rows.append(
+                        {
+                            "seed": seed,
+                            "architecture": architecture,
+                            "snr_db": snr,
+                            "channel": mode,
+                            "achieved_snr_db": truth["achieved_snr_db"],
+                            **metrics,
+                        }
+                    )
                     if seed == 0 and snr == 5.0 and mode == "NLOS":
                         for t in range(cfg.n_samples):
-                            example_rows.append({
-                                "architecture": architecture, "sample": t,
-                                "true_f1_hz": truth["frequency"][t, 0],
-                                "inferred_f1_hz": result["frequency"][t, 0],
-                                "true_f2_hz": truth["frequency"][t, 1],
-                                "inferred_f2_hz": result["frequency"][t, 1],
-                                "true_phase1": truth["phase"][t, 0],
-                                "inferred_phase1": result["phase"][t, 0],
-                                "particle_ess": result["particle_ess"][t],
-                            })
+                            example_rows.append(
+                                {
+                                    "architecture": architecture,
+                                    "sample": t,
+                                    "true_f1_hz": truth["frequency"][t, 0],
+                                    "inferred_f1_hz": result["frequency"][t, 0],
+                                    "true_f2_hz": truth["frequency"][t, 1],
+                                    "inferred_f2_hz": result["frequency"][t, 1],
+                                    "true_phase1": truth["phase"][t, 0],
+                                    "inferred_phase1": result["phase"][t, 0],
+                                    "particle_ess": result["particle_ess"][t],
+                                }
+                            )
                 complete += 1
                 if complete % max(1, total // 10) == 0:
                     print(f"completed {complete}/{total} paired joint trajectories", flush=True)
     frame = pd.DataFrame(rows)
     frame.to_csv(output / "joint_factorial_results.csv", index=False)
     summarize_cells(frame).to_csv(output / "joint_cell_summary.csv", index=False)
-    contrast_metrics = ["mse_frequency", "phase_circular_rmse", "channel_nmse", "particle_ess_mean", "latency_ms_per_sample"]
-    paired_contrasts(frame, contrast_metrics).to_csv(output / "joint_paired_effects.csv", index=False)
+    contrast_metrics = [
+        "mse_frequency",
+        "phase_circular_rmse",
+        "channel_nmse",
+        "particle_ess_mean",
+        "latency_ms_per_sample",
+    ]
+    paired_contrasts(frame, contrast_metrics).to_csv(
+        output / "joint_paired_effects.csv", index=False
+    )
     pd.DataFrame(example_rows).to_csv(output / "joint_example_trace.csv", index=False)
     metadata = {
         "experiment_name": "Signals Project Executed Joint Torus SSM",
-        "validation_scope": "Operationally representative simulation validation; not field or operational SIGINT validation.",
+        "validation_scope": (
+            "Controlled simulation validation; not field, hardware-in-the-loop, "
+            "or operational SIGINT validation."
+        ),
         "design": "2 x 3 x 3 paired full factorial",
         "unique_physical_trajectories": repetitions * 9,
         "experimental_rows": len(frame),
         "repetitions_per_cell": repetitions,
+        "architecture_execution_order": list(ARCHITECTURES),
+        "latency_interpretation": (
+            "Descriptive software timing under a fixed, nonrandomized method order; "
+            "not a causal architecture benchmark."
+        ),
         "config": asdict(cfg),
         "surrogate_validation": validation,
         "executed_components": [
@@ -931,10 +1309,12 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
             "Gaussian plus truncated-Cauchy convolution likelihood by Gauss-Legendre log-sum-exp quadrature",
             "flat-torus tangent MALA with wrapped-Gaussian forward and reverse proposal densities",
             "latent tapped-delay complex channel propagation",
-            "exact-target correction for analytical and amortized score proposals",
+            "same-target Metropolis correction for analytical and amortized score proposals",
         ],
     }
-    (output / "joint_experiment_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (output / "joint_experiment_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
 
 
 def parse_args() -> argparse.Namespace:

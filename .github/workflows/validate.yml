@@ -5,36 +5,36 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - run: python -m py_compile src/signals_project/joint_ssm.py src/signals_project/wisig_realdata.py
-      - run: python -m unittest discover -s tests -v
-        env:
-          PYTHONPATH: .
-      - run: python -m src.signals_project.joint_ssm --output /tmp/signals-smoke --repetitions 1 --particles 24 --samples 24
-        env:
-          PYTHONPATH: .
+          cache: pip
+          cache-dependency-path: requirements-ci-lock.txt
+      - run: python -m pip install --disable-pip-version-check -r requirements-ci-lock.txt
+      - run: python -m pip check
+      - run: python -m ruff check .
+      - run: python -m mypy src scripts
+      - run: python -m pytest -q
+      - run: python -m compileall -q src scripts tests
+      - run: >-
+          python -m src.signals_project.joint_ssm
+          --output /tmp/signals-smoke
+          --repetitions 2
+          --particles 24
+          --samples 24
       - run: python scripts/analyze_joint_results.py
       - run: python scripts/build_site.py
       - run: python scripts/build_report.py
-      - name: Verify publication artifacts
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from pypdf import PdfReader
-          html = Path("index.html").read_text(encoding="utf-8")
-          assert "report/Signals_Project_APA_Report.pdf" in html
-          assert "WiSig ManyRx" in html
-          assert "dataset_prepared" in html
-          assert "digitally overlapped" in html
-          assert "not simultaneous" in html.lower()
-          assert len(PdfReader("report/Signals_Project_APA_Report.pdf").pages) == 27
-          assert sum(1 for _ in open("data/joint_factorial_results.csv")) == 1801
-          PY
+      - run: python scripts/validate_repository.py
+      - run: git diff --check
+      - run: git diff --exit-code

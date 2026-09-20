@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 .DS_Store
 data-pilot*/
@@ -7,3 +10,6 @@ tmp/
 report/rendered/
 external_data/
 *.pkl
+build/
+dist/
+*.egg-info/

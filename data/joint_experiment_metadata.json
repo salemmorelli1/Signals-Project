@@ -1,10 +1,15 @@
 {
   "experiment_name": "Signals Project Executed Joint Torus SSM",
-  "validation_scope": "Operationally representative simulation validation; not field or operational SIGINT validation.",
+  "validation_scope": "Controlled simulation validation; not field, hardware-in-the-loop, or operational SIGINT validation.",
   "design": "2 x 3 x 3 paired full factorial",
   "unique_physical_trajectories": 900,
   "experimental_rows": 1800,
   "repetitions_per_cell": 100,
+  "architecture_execution_order": [
+    "Analytical joint score",
+    "Amortized joint surrogate"
+  ],
+  "latency_interpretation": "Descriptive software timing under a fixed, nonrandomized method order; not a causal architecture benchmark.",
   "config": {
     "sample_rate_hz": 128.0,
     "n_samples": 60,
@@ -65,6 +70,6 @@
     "Gaussian plus truncated-Cauchy convolution likelihood by Gauss-Legendre log-sum-exp quadrature",
     "flat-torus tangent MALA with wrapped-Gaussian forward and reverse proposal densities",
     "latent tapped-delay complex channel propagation",
-    "exact-target correction for analytical and amortized score proposals"
+    "same-target Metropolis correction for analytical and amortized score proposals"
   ]
 }

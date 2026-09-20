@@ -37,11 +37,14 @@ would partially remove physical receiver/channel structure.
 ## Security and provenance
 
 The compact distribution is a Python pickle. The adapter refuses to load it
-unless the operator supplies `--trust-official-pickle`. Before execution:
+unless the operator supplies `--trust-official-pickle` and the file matches the
+audited SHA-256
+`f634d90585167437d196c89b7c5a344903180bf4f5a55d02d175b8074e009d9a`.
+The hash comparison occurs before unpickling. Before execution:
 
 1. obtain the file from the official UCLA page;
-2. record the download date and published checksum if supplied;
-3. compute SHA-256 with the adapter;
+2. retain the expected SHA-256 separately from the downloaded file;
+3. require the adapter's pre-unpickle SHA-256 verification;
 4. retain the untouched file read-only; and
 5. never load an untrusted replacement with the acknowledgement flag.
 
