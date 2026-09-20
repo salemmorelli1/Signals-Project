@@ -124,6 +124,11 @@ Unix line endings. This retains materially more precision than the published
 figures while preventing harmless BLAS/platform last-bit differences from
 changing the committed evidence package.
 
+The report builder also compares decoded RGBA pixels before replacing a
+committed PNG. Equivalent plots therefore retain their existing bytes even when
+Windows and Linux PNG encoders choose different compression streams; a genuine
+pixel change still updates the figure and fails the clean-rebuild gate.
+
 ## Project links
 
 - Interactive laboratory: <https://salemmorelli1.github.io/Signals-Project/>
