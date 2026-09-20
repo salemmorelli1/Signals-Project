@@ -285,6 +285,22 @@ def validate_ci_contract() -> str:
         text=True,
     ).stdout.strip()
     require(not tracked_pickles, "Pickle inputs must not be tracked")
+    gitignore_lines = {
+        line.strip()
+        for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    }
+    require(
+        "/credentials.json" in gitignore_lines,
+        "Repository-root credentials.json must be ignored",
+    )
+    tracked_credentials = subprocess.run(
+        ["git", "ls-files", "credentials.json"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    require(not tracked_credentials, "Local credentials.json must not be tracked")
     return f"{len(lock_lines)} dependency pins and {len(action_refs)} pinned Actions"
 
 
