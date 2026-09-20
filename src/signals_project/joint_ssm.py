@@ -88,6 +88,29 @@ def canonicalize_artifact(value: Any) -> Any:
     return value
 
 
+def write_text_artifact(path: Path, text: str) -> None:
+    """Write LF text only when its exact committed bytes would change."""
+    payload = text.encode("utf-8")
+    if path.is_file() and path.read_bytes() == payload:
+        return
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def write_csv_artifact(
+    frame: pd.DataFrame,
+    path: Path,
+    *,
+    float_format: str | None = None,
+) -> None:
+    """Serialize a CSV deterministically without touching an identical file."""
+    text = frame.to_csv(
+        index=False,
+        float_format=float_format,
+        lineterminator="\n",
+    )
+    write_text_artifact(path, text)
+
+
 def stable_seed(*parts: object) -> int:
     value = 2166136261
     for part in parts:
@@ -1294,12 +1317,11 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
                 if complete % max(1, total // 10) == 0:
                     print(f"completed {complete}/{total} paired joint trajectories", flush=True)
     frame = pd.DataFrame(rows)
-    frame.to_csv(output / "joint_factorial_results.csv", index=False, lineterminator="\n")
-    summarize_cells(frame).to_csv(
+    write_csv_artifact(frame, output / "joint_factorial_results.csv")
+    write_csv_artifact(
+        summarize_cells(frame),
         output / "joint_cell_summary.csv",
-        index=False,
         float_format=ARTIFACT_FLOAT_FORMAT,
-        lineterminator="\n",
     )
     contrast_metrics = [
         "mse_frequency",
@@ -1308,15 +1330,12 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
         "particle_ess_mean",
         "latency_ms_per_sample",
     ]
-    paired_contrasts(frame, contrast_metrics).to_csv(
+    write_csv_artifact(
+        paired_contrasts(frame, contrast_metrics),
         output / "joint_paired_effects.csv",
-        index=False,
         float_format=ARTIFACT_FLOAT_FORMAT,
-        lineterminator="\n",
     )
-    pd.DataFrame(example_rows).to_csv(
-        output / "joint_example_trace.csv", index=False, lineterminator="\n"
-    )
+    write_csv_artifact(pd.DataFrame(example_rows), output / "joint_example_trace.csv")
     metadata = {
         "experiment_name": "Signals Project Executed Joint Torus SSM",
         "validation_scope": (
@@ -1342,8 +1361,9 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
             "same-target Metropolis correction for analytical and amortized score proposals",
         ],
     }
-    (output / "joint_experiment_metadata.json").write_text(
-        json.dumps(metadata, indent=2), encoding="utf-8"
+    write_text_artifact(
+        output / "joint_experiment_metadata.json",
+        json.dumps(metadata, indent=2),
     )
 
 

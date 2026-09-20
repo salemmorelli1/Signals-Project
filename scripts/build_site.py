@@ -10,7 +10,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t as student_t
 
-from src.signals_project.joint_ssm import canonical_artifact_float, validate_factorial_frame
+from src.signals_project.joint_ssm import (
+    canonical_artifact_float,
+    validate_factorial_frame,
+    write_text_artifact,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -138,7 +142,7 @@ function showModel(i){document.querySelectorAll('.pipe').forEach((x,j)=>x.classL
 </script></body></html>"""
     for token, value in tokens.items():
         page = page.replace(token, value)
-    (ROOT / "index.html").write_text(page, encoding="utf-8")
+    write_text_artifact(ROOT / "index.html", page)
 
 
 if __name__ == "__main__":

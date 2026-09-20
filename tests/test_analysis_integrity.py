@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -15,10 +16,34 @@ from scipy.stats import t as student_t
 from scripts.analyze_joint_results import holm_adjust, multivariate_within_seed
 from scripts.build_report import _write_png_if_pixels_changed
 from scripts.build_site import SITE_METRICS, simulation_summaries
-from src.signals_project.joint_ssm import canonical_artifact_float
+from src.signals_project.joint_ssm import (
+    canonical_artifact_float,
+    write_csv_artifact,
+    write_text_artifact,
+)
 
 
 class AnalysisIntegrityTests(unittest.TestCase):
+    def test_identical_text_artifacts_are_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "artifact.txt"
+            path.write_bytes(b"stable\n")
+            with patch.object(Path, "write_text", side_effect=AssertionError("rewritten")):
+                write_text_artifact(path, "stable\n")
+
+            write_text_artifact(path, "changed\n")
+            self.assertEqual(path.read_bytes(), b"changed\n")
+
+    def test_csv_artifacts_use_lf_and_skip_identical_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "artifact.csv"
+            frame = pd.DataFrame({"value": [1.25, 2.5]})
+            write_csv_artifact(frame, path, float_format="%.12g")
+            original = path.read_bytes()
+            self.assertNotIn(b"\r\n", original)
+            with patch.object(Path, "write_text", side_effect=AssertionError("rewritten")):
+                write_csv_artifact(frame, path, float_format="%.12g")
+
     def test_identical_png_pixels_preserve_committed_encoding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "figure.png"
