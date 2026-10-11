@@ -6,10 +6,12 @@ import inspect
 import math
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
+from src.signals_project import joint_ssm
 from src.signals_project.joint_ssm import (
     ConvolutionNoise,
     JointConfig,
@@ -78,6 +80,55 @@ class TorusGeometryTests(unittest.TestCase):
 
 
 class JointTargetTests(unittest.TestCase):
+    def test_initial_prior_uses_configured_generator_scales(self) -> None:
+        cfg = replace(
+            JointConfig(), particles=12000, initial_logamp_sd=0.11,
+            initial_channel_sd=0.19, frequency_sd=0.27,
+        )
+        engine = JointParticleFilter(cfg, "LOS", "Analytical joint score", None, 77)
+        state = engine.initialize()
+        self.assertAlmostEqual(float(state["logamp"].std()), cfg.initial_logamp_sd, delta=0.003)
+        residual = state["channel"] - engine.spec.means
+        self.assertAlmostEqual(float(residual.real.std()), cfg.initial_channel_sd, delta=0.005)
+        for emitter, alphabet in enumerate(cfg.channel_alphabets):
+            deviations = state["frequency"][:, emitter] - alphabet[state["z"][:, emitter]]
+            self.assertAlmostEqual(float(deviations.std()), cfg.frequency_sd, delta=0.008)
+
+    def test_initial_observation_has_no_transition_or_phantom_delayed_source(self) -> None:
+        cfg = replace(JointConfig(), particles=16, n_samples=12, forced_move_interval=1)
+        engine = JointParticleFilter(cfg, "NLOS", "Analytical joint score", None, 77)
+        initial = engine.initialize()
+        noise = ConvolutionNoise(0.3, 0.1, 0.5, 24)
+        with (
+            patch.object(engine, "initialize", return_value=initial),
+            patch.object(engine, "propagate", wraps=engine.propagate) as propagation,
+            patch.object(engine, "mala_move", wraps=engine.mala_move) as moves,
+        ):
+            output = engine.run(np.arange(12, dtype=complex), noise)
+        # With strictly delayed taps the first observation is noise only,
+        # so it must leave the initialized frequency distribution unchanged.
+        np.testing.assert_allclose(output["frequency"][0], initial["frequency"].mean(axis=0))
+        self.assertEqual([call.args[1] for call in propagation.call_args_list], list(range(1, 12)))
+        self.assertTrue(all(call.args[2] != 0.0 for call in moves.call_args_list))
+        self.assertTrue(np.all(propagation.call_args_list[0].args[0]["history"][:, :, 1:] == 0))
+
+    def test_ess_records_weight_collapse_before_resampling(self) -> None:
+        cfg = replace(JointConfig(), particles=24, n_samples=12, forced_move_interval=1)
+        engine = JointParticleFilter(cfg, "LOS", "Analytical joint score", None, 12)
+        noise = ConvolutionNoise(0.003, 0.001, 0.005, 24)
+        weighted_ess = []
+        original = joint_ssm.systematic_resample
+
+        def record(weights, rng):
+            weighted_ess.append(float(1.0 / np.sum(weights**2)))
+            return original(weights, rng)
+
+        with patch.object(joint_ssm, "systematic_resample", side_effect=record):
+            output = engine.run(np.ones(12, dtype=complex), noise)
+        np.testing.assert_allclose(output["particle_ess"], weighted_ess)
+        self.assertLess(float(output["particle_ess"][0]), 2.0)
+        np.testing.assert_allclose(output["particle_ess_post_resampling"], cfg.particles)
+
     def test_channel_alphabets_are_nyquist_valid_and_cochannel(self) -> None:
         cfg = JointConfig()
         first, second = cfg.channel_alphabets

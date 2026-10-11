@@ -20,6 +20,7 @@ import json
 import math
 import pickle
 import re
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,9 +78,24 @@ def _load_verified_compact_dataset(
             "WiSig compact files use pickle. Pass trust_official_pickle=True only "
             "for a file obtained from the official UCLA WiSig distribution."
         )
-    actual_sha256 = verify_file_sha256(path, expected_sha256)
-    with path.open("rb") as handle:
-        dataset = pickle.load(handle)  # nosec B301 -- gated to an acknowledged official file
+    if not isinstance(expected_sha256, str) or SHA256_PATTERN.fullmatch(expected_sha256) is None:
+        raise ValueError("expected_sha256 must be exactly 64 hexadecimal characters")
+    # Hash and parse the same private byte snapshot. Reopening the pathname
+    # after verification lets a replacement file bypass the checksum gate.
+    # A disk-backed temporary file keeps the 1.9 GB compact dataset out of RAM.
+    digest = hashlib.sha256()
+    with path.open("rb") as handle, tempfile.TemporaryFile() as snapshot:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+            snapshot.write(block)
+        actual_sha256 = digest.hexdigest()
+        if not hmac.compare_digest(actual_sha256, expected_sha256.lower()):
+            raise ValueError(
+                f"SHA-256 mismatch for {path}: expected {expected_sha256.lower()}, "
+                f"found {actual_sha256}"
+            )
+        snapshot.seek(0)
+        dataset = pickle.load(snapshot)  # nosec B301 -- acknowledged, verified snapshot
     validate_compact_dataset(dataset)
     return dataset, actual_sha256
 
@@ -110,6 +126,10 @@ def validate_compact_dataset(dataset: dict[str, Any]) -> dict[str, int]:
     n_tx = len(dataset["tx_list"])
     n_rx = len(dataset["rx_list"])
     n_day = len(dataset["capture_date_list"])
+    for key in ("tx_list", "rx_list", "capture_date_list"):
+        labels = [str(value) for value in dataset[key]]
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"{key} must contain unique acquisition identifiers")
     eq_values = list(dataset["equalized_list"])
     if n_tx < 2 or n_rx < 2 or n_day < 2:
         raise ValueError("External evaluation requires at least 2 Tx, 2 Rx, and 2 days")
@@ -139,6 +159,8 @@ def validate_compact_dataset(dataset: dict[str, Any]) -> dict[str, int]:
                         f"Expected (signals, 256, 2) I/Q at Tx {tx_i}, Rx {rx_i}, day {day_i}; "
                         f"found {array.shape}"
                     )
+                if array.dtype.kind not in "fiu":
+                    raise ValueError("I/Q components must be real numeric values")
                 if not np.isfinite(array).all():
                     raise ValueError("Non-finite I/Q values found")
                 nonempty += 1
@@ -255,6 +277,9 @@ def build_overlap_manifest(
                 mixture_number += 1
     if not rows:
         raise ValueError("No receiver/day domain contains two usable transmitters")
+    if {row["split"] for row in rows} != {"train", "validation", "test"}:
+        raise ValueError("Usable overlaps are required in train, validation, and test")
+    validate_overlap_manifest(dataset, rows)
     return rows
 
 
@@ -262,30 +287,91 @@ def _rms(iq: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.sum(np.square(iq, dtype=np.float64), axis=-1))))
 
 
+def _manifest_index(value: Any, size: int, field: str) -> int:
+    # Canonical integer strings support CSV round trips, but fractional,
+    # boolean, and negative values must never silently select other captures.
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"{field} must be an integer recording index")
+    index = int(value)
+    if not 0 <= index < size:
+        raise ValueError(f"{field} is outside the recording axis")
+    return index
+
+
+def validate_overlap_manifest(dataset: dict[str, Any], manifest: list[dict[str, Any]]) -> None:
+    """Validate recording lineage and receiver/day split boundaries before use."""
+    if not manifest:
+        raise ValueError("manifest cannot be empty")
+    required = {
+        "mixture_id", "split", "tx_a_index", "tx_a", "signal_a_index",
+        "tx_b_index", "tx_b", "signal_b_index", "rx_index", "receiver",
+        "day_index", "capture_date", "equalized", "sir_db", "samples",
+        "source_kind", "overlap_kind",
+    }
+    identifiers: set[str] = set()
+    domains: dict[tuple[int, int], str] = {}
+    receivers: dict[str, set[int]] = {name: set() for name in ("train", "validation", "test")}
+    days: dict[str, set[int]] = {name: set() for name in ("train", "validation", "test")}
+    for row in manifest:
+        missing = sorted(required - set(row))
+        if missing:
+            raise ValueError(f"Manifest row is missing fields: {', '.join(missing)}")
+        identifier = row["mixture_id"]
+        if not isinstance(identifier, str) or not identifier or identifier in identifiers:
+            raise ValueError("Manifest mixture_id values must be nonempty and unique")
+        identifiers.add(identifier)
+        split = row["split"]
+        if split not in receivers:
+            raise ValueError("Manifest split must be train, validation, or test")
+        rx = _manifest_index(row["rx_index"], len(dataset["rx_list"]), "rx_index")
+        day = _manifest_index(row["day_index"], len(dataset["capture_date_list"]), "day_index")
+        tx_a = _manifest_index(row["tx_a_index"], len(dataset["tx_list"]), "tx_a_index")
+        tx_b = _manifest_index(row["tx_b_index"], len(dataset["tx_list"]), "tx_b_index")
+        if tx_a == tx_b:
+            raise ValueError(f"Manifest row {identifier} reuses one transmitter")
+        for label, expected in (
+            ("tx_a", dataset["tx_list"][tx_a]),
+            ("tx_b", dataset["tx_list"][tx_b]),
+            ("receiver", dataset["rx_list"][rx]),
+            ("capture_date", dataset["capture_date_list"][day]),
+        ):
+            if str(row[label]) != str(expected):
+                raise ValueError(f"Manifest {label} does not match its recording index")
+        _manifest_index(
+            row["signal_a_index"], len(_non_equalized_array(dataset, tx_a, rx, day)),
+            "signal_a_index",
+        )
+        _manifest_index(
+            row["signal_b_index"], len(_non_equalized_array(dataset, tx_b, rx, day)),
+            "signal_b_index",
+        )
+        if str(row["equalized"]) != "0" or str(row["samples"]) != "256":
+            raise ValueError("Manifest requires non-equalized 256-sample captures")
+        if row["source_kind"] != "hardware-captured WiSig I/Q" or row["overlap_kind"] != "digital":
+            raise ValueError("Manifest source/overlap provenance is inconsistent")
+        if not math.isfinite(float(row["sir_db"])):
+            raise ValueError(f"Non-finite SIR in {identifier}")
+        if (rx, day) in domains and domains[(rx, day)] != split:
+            raise ValueError("A receiver/day domain cannot appear in multiple splits")
+        domains[(rx, day)] = split
+        receivers[split].add(rx)
+        days[split].add(day)
+    if receivers["test"] & (receivers["train"] | receivers["validation"]):
+        raise ValueError("Test receivers must be held out from train and validation")
+    if days["train"] & days["validation"]:
+        raise ValueError("Validation capture days must be held out from training")
+
+
 def materialize_overlaps(
     dataset: dict[str, Any], manifest: list[dict[str, Any]]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return source A, SIR-scaled source B, and their exact digital sum."""
     validate_compact_dataset(dataset)
-    if not manifest:
-        raise ValueError("manifest cannot be empty")
+    validate_overlap_manifest(dataset, manifest)
     source_a, source_b, mixture = [], [], []
     for row in manifest:
-        required = {
-            "mixture_id",
-            "tx_a_index",
-            "tx_b_index",
-            "rx_index",
-            "day_index",
-            "signal_a_index",
-            "signal_b_index",
-            "sir_db",
-        }
-        missing = sorted(required - set(row))
-        if missing:
-            raise ValueError(f"Manifest row is missing fields: {', '.join(missing)}")
-        if int(row["tx_a_index"]) == int(row["tx_b_index"]):
-            raise ValueError(f"Manifest row {row['mixture_id']} reuses one transmitter")
         a = _non_equalized_array(
             dataset, int(row["tx_a_index"]), int(row["rx_index"]), int(row["day_index"])
         )[int(row["signal_a_index"])].astype(np.float32, copy=True)
@@ -298,13 +384,18 @@ def materialize_overlaps(
         sir_db = float(row["sir_db"])
         if not math.isfinite(sir_db):
             raise ValueError(f"Non-finite SIR in {row['mixture_id']}")
-        scale_b = rms_a / (rms_b * 10.0 ** (sir_db / 20.0))
+        try:
+            scale_b = rms_a / (rms_b * 10.0 ** (sir_db / 20.0))
+        except (OverflowError, ZeroDivisionError) as exc:
+            raise ValueError(f"Invalid SIR scale in {row['mixture_id']}") from exc
         if not math.isfinite(scale_b) or scale_b <= 0.0:
             raise ValueError(f"Invalid SIR scale in {row['mixture_id']}")
         b *= np.float32(scale_b)
         y = a + b
         if not np.isfinite(b).all() or not np.isfinite(y).all():
             raise ValueError(f"Non-finite overlap in {row['mixture_id']}")
+        if _rms(b) <= 0.0:
+            raise ValueError(f"SIR scaling erased source B in {row['mixture_id']}")
         source_a.append(a)
         source_b.append(b)
         mixture.append(y)
@@ -346,10 +437,15 @@ def prepare_dataset(
     )
     structure = validate_compact_dataset(dataset)
     manifest = build_overlap_manifest(dataset, mixtures_per_domain=mixtures_per_domain, seed=seed)
+    if not materialize and (output / "wisig_digital_overlaps.npz").exists():
+        raise ValueError("Manifest-only preparation requires an output without an existing overlap archive")
+    # Finish every numerical check before replacing any prior preparation.
+    # Otherwise a bad recording can leave a new manifest beside an old NPZ.
+    arrays = materialize_overlaps(dataset, manifest) if materialize else None
     output.mkdir(parents=True, exist_ok=True)
     write_manifest(output / "wisig_overlap_manifest.csv", manifest)
-    if materialize:
-        source_a, source_b, mixture = materialize_overlaps(dataset, manifest)
+    if arrays is not None:
+        source_a, source_b, mixture = arrays
         np.savez_compressed(
             output / "wisig_digital_overlaps.npz",
             source_a=source_a,
@@ -367,6 +463,14 @@ def prepare_dataset(
         "dataset_sha256": dataset_sha256,
         "expected_dataset_sha256": expected_sha256.lower(),
         "integrity_verified_before_unpickle": True,
+        "materialized": materialize,
+        "artifact_sha256": {
+            name: sha256_file(output / name)
+            for name in (
+                ["wisig_overlap_manifest.csv", "wisig_digital_overlaps.npz"]
+                if materialize else ["wisig_overlap_manifest.csv"]
+            )
+        },
         "source_page": OFFICIAL_DATASET_PAGE,
         "examples_repository": OFFICIAL_EXAMPLES_REPO,
         "license": "CC BY-NC-SA 4.0 (dataset); BSD-3-Clause (wisig-examples code)",

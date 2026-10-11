@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -126,8 +127,22 @@ def multivariate_within_seed(frame: pd.DataFrame, metric: str, transform: str) -
             raise ValueError(f"At least {q + 1} seed blocks are required for {effect}")
         mean = values.mean(axis=0)
         covariance = np.atleast_2d(np.cov(values, rowvar=False, ddof=1))
-        covariance += np.eye(q) * np.finfo(float).eps
-        t_squared = float(n * mean @ np.linalg.pinv(covariance) @ mean)
+        # The ordinary Hotelling F reference requires a nonsingular sample
+        # covariance. Adding epsilon and using a pseudoinverse fabricates
+        # ordinary F tests for deterministic/rank-deficient contrasts.
+        variances = np.diag(covariance)
+        if not np.isfinite(covariance).all() or np.any(variances <= 0.0):
+            raise ValueError(f"{metric}: {effect} requires positive contrast variance")
+        scales = np.sqrt(variances)
+        correlation = covariance / np.outer(scales, scales)
+        eigenvalues = np.linalg.eigvalsh(covariance)
+        tolerance = q * np.finfo(float).eps * eigenvalues[-1]
+        if eigenvalues[0] <= tolerance:
+            raise ValueError(f"{metric}: {effect} requires a full-rank contrast covariance")
+        standardized_mean = mean / scales
+        t_squared = float(
+            n * standardized_mean @ np.linalg.solve(correlation, standardized_mean)
+        )
         f_value = float((n - q) * t_squared / (q * (n - 1)))
         df1, df2 = q, n - q
         p_value = float(f_distribution.sf(f_value, df1, df2))
@@ -197,6 +212,10 @@ def main() -> None:
         "analysis": "Orthonormal-contrast multivariate repeated-measures analysis with trajectory seed as the block",
         "primary_response": "log frequency MSE",
         "multiplicity": "Holm adjustment across the seven primary-response omnibus effects",
+        "covariance_policy": "Full-rank sample covariance required; singular ordinary F tests are rejected",
+        "source_results_sha256": hashlib.sha256(
+            (DATA / "joint_factorial_results.csv").read_bytes()
+        ).hexdigest(),
         "architecture_means": architecture_means,
         "primary_effects": primary.to_dict(orient="records"),
         "warning": "This is simulation evidence and is not field or operational SIGINT validation.",

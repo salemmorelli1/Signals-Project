@@ -22,6 +22,7 @@ I/Q, but no WiSig inference result is claimed here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import time
@@ -41,6 +42,7 @@ SURROGATE_ARCHITECTURE = "Amortized joint surrogate"
 ARCHITECTURES = (ANALYTICAL_ARCHITECTURE, SURROGATE_ARCHITECTURE)
 SUPPORTED_CHANNEL_MODES = ("LOS", "MP", "NLOS")
 ARTIFACT_FLOAT_FORMAT = "%.12g"
+FILTER_PROTOCOL_VERSION = "joint-ssm-v2"
 
 
 def _require_integer(name: str, value: object, *, minimum: int = 0) -> int:
@@ -152,6 +154,8 @@ class JointConfig:
     logamp_mean: float = 0.0
     logamp_reversion: float = 0.035
     logamp_sd: float = 0.035
+    initial_logamp_sd: float = 0.18
+    initial_channel_sd: float = 0.12
     frequency_rho: float = 0.82
     frequency_sd: float = 0.42
     phase_sd: float = 0.075
@@ -188,6 +192,8 @@ class JointConfig:
         _require_positive("sample_rate_hz", self.sample_rate_hz)
         for name in (
             "logamp_sd",
+            "initial_logamp_sd",
+            "initial_channel_sd",
             "frequency_sd",
             "phase_sd",
             "channel_sd",
@@ -457,9 +463,9 @@ def simulate_joint_trajectory(
     for emitter, alphabet in enumerate(cfg.channel_alphabets):
         z[0, emitter] = rng.integers(len(alphabet))
         frequency[0, emitter] = alphabet[z[0, emitter]] + rng.normal(scale=cfg.frequency_sd)
-    logamp[0] = cfg.logamp_mean + rng.normal(scale=0.18, size=k)
+    logamp[0] = cfg.logamp_mean + rng.normal(scale=cfg.initial_logamp_sd, size=k)
     phase[0] = rng.uniform(0.0, TWO_PI, size=k)
-    channel[0] = spec.means + complex_normal(rng, (k, r), 0.12)
+    channel[0] = spec.means + complex_normal(rng, (k, r), cfg.initial_channel_sd)
 
     for t in range(1, n):
         z[t] = z[t - 1]
@@ -899,18 +905,20 @@ class JointParticleFilter:
     def initialize(self) -> dict[str, np.ndarray]:
         p, k = self.cfg.particles, self.cfg.emitters
         state: dict[str, np.ndarray] = {
-            "logamp": self.rng.normal(self.cfg.logamp_mean, 0.28, size=(p, k)),
+            "logamp": self.rng.normal(
+                self.cfg.logamp_mean, self.cfg.initial_logamp_sd, size=(p, k)
+            ),
             "frequency": np.zeros((p, k)),
             "z": np.zeros((p, k), dtype=int),
             "phase": self.rng.uniform(0.0, TWO_PI, size=(p, k)),
             "channel": self.spec.means[None, :, :]
-            + complex_normal(self.rng, (p, k, self.spec.taps), 0.24),
+            + complex_normal(self.rng, (p, k, self.spec.taps), self.cfg.initial_channel_sd),
             "history": np.zeros((p, k, self.spec.max_delay + 1), dtype=np.complex128),
         }
         for emitter, alphabet in enumerate(self.cfg.channel_alphabets):
             state["z"][:, emitter] = self.rng.integers(len(alphabet), size=p)
             state["frequency"][:, emitter] = alphabet[state["z"][:, emitter]] + self.rng.normal(
-                scale=1.0, size=p
+                scale=self.cfg.frequency_sd, size=p
             )
         state["history"][:, :, 0] = np.exp(state["logamp"] + 1j * state["phase"])
         return state
@@ -1035,18 +1043,26 @@ class JointParticleFilter:
         state = self.initialize()
         log_weights = np.full(p, -math.log(p))
         frequency_est, phase_est, channel_est = [], [], []
-        particle_ess, unique_ancestors, acceptance = [], [], []
+        particle_ess, post_resampling_ess, unique_ancestors, acceptance = [], [], [], []
         resampling_count = 0
         start = time.perf_counter()
         for t, y_t in enumerate(observation):
             previous = copy_state(state)
-            state = self.propagate(previous, t)
+            # The first sample is drawn from the initial prior, with zero
+            # pre-observation history. A transition at t=0 invents a source
+            # at t=-1, particularly changing the NLOS delayed observation.
+            if t > 0:
+                state = self.propagate(previous, t)
             prediction, _ = source_prediction(state, self.spec)
             log_lik, _ = noise.log_prob_complex(y_t - prediction, False)
             log_weights = log_weights + log_lik
+            if not np.isfinite(log_weights).all():
+                raise RuntimeError("Observation weighting produced non-finite log weights")
             log_weights -= logsumexp(log_weights)
             weights = np.exp(log_weights)
             ess = 1.0 / np.sum(weights**2)
+            # Record the weighting diagnostic before resampling resets it.
+            particle_ess.append(float(ess))
             force_move = (t + 1) % cfg.forced_move_interval == 0
             if ess < cfg.resample_fraction * p or force_move:
                 index = systematic_resample(weights, self.rng)
@@ -1055,20 +1071,25 @@ class JointParticleFilter:
                 unique_ancestors.append(len(np.unique(index)))
                 log_weights[:] = -math.log(p)
                 resampling_count += 1
-                state, acc = self.mala_move(state, previous, y_t, noise)
-                acceptance.append(acc)
+                # transition_target is conditional on an actual ancestor;
+                # it is not the initial-prior target. At t=0 use ordinary
+                # importance weighting/resampling without a transition move.
+                if t > 0:
+                    state, acc = self.mala_move(state, previous, y_t, noise)
+                    acceptance.append(acc)
                 weights = np.full(p, 1.0 / p)
                 ess = float(p)
             frequency_est.append(np.sum(weights[:, None] * state["frequency"], axis=0))
             phase_est.append(weighted_circular_mean(state["phase"], weights))
             channel_est.append(np.sum(weights[:, None, None] * state["channel"], axis=0))
-            particle_ess.append(ess)
+            post_resampling_ess.append(float(ess))
         elapsed = time.perf_counter() - start
         return {
             "frequency": np.asarray(frequency_est),
             "phase": np.asarray(phase_est),
             "channel": np.asarray(channel_est),
             "particle_ess": np.asarray(particle_ess),
+            "particle_ess_post_resampling": np.asarray(post_resampling_ess),
             "unique_ancestors": np.asarray(unique_ancestors) if unique_ancestors else np.array([p]),
             "mala_acceptance": float(np.mean(acceptance)) if acceptance else math.nan,
             "resampling_count": resampling_count,
@@ -1311,6 +1332,9 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
                                     "true_phase1": truth["phase"][t, 0],
                                     "inferred_phase1": result["phase"][t, 0],
                                     "particle_ess": result["particle_ess"][t],
+                                    "particle_ess_post_resampling": result[
+                                        "particle_ess_post_resampling"
+                                    ][t],
                                 }
                             )
                 complete += 1
@@ -1337,13 +1361,14 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
     )
     write_csv_artifact(pd.DataFrame(example_rows), output / "joint_example_trace.csv")
     metadata = {
+        "filter_protocol_version": FILTER_PROTOCOL_VERSION,
         "experiment_name": "Signals Project Executed Joint Torus SSM",
         "validation_scope": (
             "Controlled simulation validation; not field, hardware-in-the-loop, "
             "or operational SIGINT validation."
         ),
         "design": "2 x 3 x 3 paired full factorial",
-        "unique_physical_trajectories": repetitions * 9,
+        "unique_physical_trajectories": total,
         "experimental_rows": len(frame),
         "repetitions_per_cell": repetitions,
         "architecture_execution_order": list(ARCHITECTURES),
@@ -1352,6 +1377,28 @@ def run_factorial(output: Path, repetitions: int, cfg: JointConfig) -> None:
             "not a causal architecture benchmark."
         ),
         "config": asdict(cfg),
+        "initial_observation_policy": (
+            "Weight the configured initial prior at t=0 with zero pre-observation "
+            "source history; transition-conditioned MALA starts at t=1."
+        ),
+        "particle_ess_definition": "importance-weight ESS before resampling",
+        "noise_hyperparameter_scope": (
+            "Known, calibrated noise parameters in a controlled simulation; "
+            "noise-scale estimation from unknown real captures is not validated."
+        ),
+        "source_files_sha256": {
+            "src/signals_project/joint_ssm.py": hashlib.sha256(
+                Path(__file__).read_bytes()
+            ).hexdigest()
+        },
+        "artifact_sha256": {
+            name: hashlib.sha256((output / name).read_bytes()).hexdigest()
+            for name in (
+                "joint_factorial_results.csv",
+                "joint_example_trace.csv",
+                "joint_surrogate_weights.npz",
+            )
+        },
         "surrogate_validation": validation,
         "executed_components": [
             "joint sequential particles over amplitude, frequency, hopping state, torus phase, channel, and delay buffer",

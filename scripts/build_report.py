@@ -373,7 +373,7 @@ def make_figures(
             label=method.replace(" joint score", "").replace(" joint surrogate", ""),
         )
         axes[1].plot(d.snr_db, d.latency, color=color, marker=mark)
-    axes[0].set_ylabel("Mean particle ESS")
+    axes[0].set_ylabel("Mean weighting ESS")
     axes[1].set_ylabel("Latency (ms/sample)")
     for ax in axes:
         ax.set_xlabel("SNR (dB)")
@@ -443,7 +443,7 @@ def make_figures(
     axes[0].legend(frameon=False, fontsize=7)
     axes[1].fill_between(d["sample"], d.particle_ess, color=green, alpha=0.45)
     axes[1].plot(d["sample"], d.particle_ess, color=green)
-    axes[1].set_ylabel("Particle ESS")
+    axes[1].set_ylabel("Weighting ESS")
     for ax in axes:
         ax.set_xlabel("I/Q sample")
         ax.grid(alpha=0.2)
@@ -480,6 +480,19 @@ def main() -> None:
     su = means.loc[SURROGATE]
     overall = {r.metric: r for r in pairs[pairs.group == "Overall"].itertuples()}
     primary = effects[effects.response == "mse_frequency"].set_index("effect")
+    significant = [
+        name for name, row in primary.iterrows() if row.p_holm_within_response <= 0.05
+    ]
+    primary_statement = (
+        "Primary log-MSE effects passing the seven-test Holm correction: "
+        + (", ".join(significant) if significant else "none") + "."
+    )
+    raw_pair = overall["mse_frequency"]
+    raw_interval_statement = (
+        "The descriptive original-scale interval includes zero."
+        if raw_pair.ci95_low <= 0.0 <= raw_pair.ci95_high
+        else "The descriptive original-scale interval excludes zero; it is unadjusted."
+    )
     story = []
     story += [
         Spacer(1, 1.2 * inch),
@@ -493,11 +506,11 @@ def main() -> None:
         ),
         Spacer(1, 0.55 * inch),
         p("Signals Project Research Group", sty, "center"),
-        p("August 27, 2026", sty, "center"),
+        p("October 11, 2026 - corrected joint-ssm-v2 evidence", sty, "center"),
         Spacer(1, 0.55 * inch),
         p("Author Note", sty, "h2"),
         p(
-            "This report documents executable code and a completed paired simulation experiment. The evidence supports controlled simulation validation only. No operational or field SIGINT validation claim is made.",
+            "This report documents the corrected joint-ssm-v2 simulation. The original results are retained with hashes in data/baseline_v1. The evidence supports controlled simulation validation only. WiSig model inference and operational validation remain pending.",
             sty,
             "body0",
         ),
@@ -508,7 +521,7 @@ def main() -> None:
         "Abstract",
         [
             p(
-                f"Blind separation of co-channel frequency-hopping wave packets requires joint uncertainty propagation over source states, circular phase, discrete hops, and time-varying multipath. We implemented a sequential particle filter whose particles carry two log amplitudes, frequencies, hop states, phases on the flat torus, complex tapped-delay coefficients, and delayed source histories. The observation density is the convolution of independent Gaussian and truncated-Cauchy variables, evaluated by {meta['config']['quadrature_nodes']}-node Gauss-Legendre quadrature with log-sum-exp stabilization. Particle rejuvenation uses tangent-space MALA with a wrapped-Gaussian proposal density; the Metropolis correction always evaluates the same configured numerical target. A paired 2 × 3 × 3 design crossed analytical versus amortized joint scores, +15/+5/−5 dB, and LOS/minor-multipath/NLOS channels. One hundred seed profiles per physical cell yielded 1,800 method runs. Mean frequency MSE was {an.mse_frequency:.2f} Hz² for the analytical score and {su.mse_frequency:.2f} Hz² for the surrogate; the raw paired difference across {int(overall['mse_frequency'].n_blocks)} independent seed profiles was {overall['mse_frequency'].mean_difference_surrogate_minus_analytical:.2f}, 95% <i>t</i> CI [{overall['mse_frequency'].ci95_low:.2f}, {overall['mse_frequency'].ci95_high:.2f}]. SNR, channel, and their interaction were significant after Holm adjustment, whereas architecture was not. The surrogate recorded higher software timing and lower MALA acceptance; timing is descriptive because method order was fixed. These findings validate execution and numerical coherence in controlled simulation, not operational SIGINT performance.",
+                f"Blind separation of co-channel frequency-hopping wave packets requires joint uncertainty propagation over source states, circular phase, discrete hops, and time-varying multipath. We implemented a sequential particle filter whose particles carry two log amplitudes, frequencies, hop states, phases on the flat torus, complex tapped-delay coefficients, and delayed source histories. The observation density is the convolution of independent Gaussian and truncated-Cauchy variables, evaluated by {meta['config']['quadrature_nodes']}-node Gauss-Legendre quadrature with log-sum-exp stabilization. Particle rejuvenation uses tangent-space MALA with a wrapped-Gaussian proposal density; the Metropolis correction always evaluates the same configured numerical target. A paired 2 × 3 × 3 design crossed analytical versus amortized joint scores, +15/+5/−5 dB, and LOS/minor-multipath/NLOS channels. One hundred seed profiles per physical cell yielded 1,800 method runs. Mean frequency MSE was {an.mse_frequency:.2f} Hz² for the analytical score and {su.mse_frequency:.2f} Hz² for the surrogate; the raw paired difference across {int(overall['mse_frequency'].n_blocks)} independent seed profiles was {overall['mse_frequency'].mean_difference_surrogate_minus_analytical:.2f}, 95% <i>t</i> CI [{overall['mse_frequency'].ci95_low:.2f}, {overall['mse_frequency'].ci95_high:.2f}]. {primary_statement} MALA acceptance and software timing were recorded; timing is descriptive because method order was fixed. These findings validate execution and numerical coherence in controlled simulation, not operational SIGINT performance.",
                 sty,
                 "body0",
             ),
@@ -534,9 +547,9 @@ def main() -> None:
             *bullets(
                 [
                     f"Executed scope: {meta['unique_physical_trajectories']} paired physical trajectories and {meta['experimental_rows']} method-level runs.",
-                    f"Primary raw-scale contrast: {overall['mse_frequency'].mean_difference_surrogate_minus_analytical:.2f} Hz², with an interval crossing zero.",
+                    f"Primary raw-scale contrast: {raw_pair.mean_difference_surrogate_minus_analytical:.2f} Hz². {raw_interval_statement}",
                     f"Recorded timing contrast: surrogate minus analytical was {overall['latency_ms_per_sample'].mean_difference_surrogate_minus_analytical:.3f} ms per sample under fixed method order.",
-                    f"Particle health: mean ESS was {an.particle_ess_mean:.2f} analytical and {su.particle_ess_mean:.2f} surrogate.",
+                    f"Particle health: pre-resampling mean ESS was {an.particle_ess_mean:.2f} analytical and {su.particle_ess_mean:.2f} surrogate.",
                     "Claim boundary: simulation validation is complete; field validation remains unperformed.",
                 ],
                 sty,
@@ -754,11 +767,11 @@ def main() -> None:
         "Sequential Particle Filter",
         [
             p(
-                "At each time step, particles sample the switching, frequency, amplitude, torus phase, channel, and history transitions. The fixed-quadrature convolution likelihood updates log weights. Stable normalization subtracts logsumexp, and particle ESS is 1/Σw<sub>j</sub>².",
+                "At t=0 the filter weights the configured initial prior with zero pre-observation source history. Transitions begin at t=1. The initial amplitude, frequency, and channel dispersions match the generator. Likelihood weighting uses logsumexp; reported ESS is 1/Σw<sub>j</sub>² before resampling resets the weights.",
                 sty,
             ),
             p(
-                "Systematic resampling occurs when ESS falls below .58P or at a forced six-sample move interval. The latter guarantees that both proposal operators are exercised across all conditions. After resampling, one MALA rejuvenation step targets the exact conditional density given the selected ancestor.",
+                "Systematic resampling occurs when ESS falls below .58P or at a forced six-sample move interval. At t≥1, one MALA rejuvenation step targets the conditional density given the selected ancestor. At t=0 resampling uses importance weights without a transition-conditioned MALA move. The trace retains both weighting and post-resampling ESS.",
                 sty,
             ),
             p(
@@ -924,7 +937,7 @@ def main() -> None:
                 sty,
             ),
             p(
-                "For an effect with q contrast coordinates, the 100 seed-level score vectors are tested against zero using Hotelling’s T² and its exact F transformation: F = (n−q)T²/[q(n−1)], with q and n−q degrees of freedom. This multivariate repeated-measures test avoids a univariate sphericity assumption.",
+                "For an effect with q coordinates, seed-level contrasts use Hotelling’s T²: F = (n−q)T²/[q(n−1)], with q and n−q degrees of freedom. The ordinary F reference assumes independent multivariate-normal block contrasts and nonsingular covariance. Zero-variance and rank-deficient cases are rejected; no epsilon regularization or pseudoinverse substitutes for those assumptions.",
                 sty,
             ),
             p(
@@ -988,7 +1001,7 @@ def main() -> None:
                 sty,
             ),
             p(
-                "Thus, the original-scale paired summary does not establish an overall accuracy difference. Error increases as SNR decreases and as the channel moves from LOS to delayed NLOS. Architecture-specific curves largely overlap relative to these environmental shifts.",
+                raw_interval_statement + " " + primary_statement,
                 sty,
             ),
         ],
@@ -1010,7 +1023,7 @@ def main() -> None:
                 sty,
             ),
             p(
-                f"Mean channel NMSE was {an.channel_nmse:.3f} analytical and {su.channel_nmse:.3f} surrogate. The paired difference was {overall['channel_nmse'].mean_difference_surrogate_minus_analytical:.3f}, 95% CI [{overall['channel_nmse'].ci95_low:.3f}, {overall['channel_nmse'].ci95_high:.3f}]. Neither descriptive interval excludes zero.",
+                f"Mean channel NMSE was {an.channel_nmse:.3f} analytical and {su.channel_nmse:.3f} surrogate. The paired difference was {overall['channel_nmse'].mean_difference_surrogate_minus_analytical:.3f}, 95% CI [{overall['channel_nmse'].ci95_low:.3f}, {overall['channel_nmse'].ci95_high:.3f}]. These intervals are descriptive and unadjusted for multiplicity.",
                 sty,
             ),
         ],
@@ -1023,7 +1036,7 @@ def main() -> None:
         [
             image("health_compute.png"),
             p(
-                "Figure 4. Mean particle ESS and descriptive software timing by SNR and architecture.",
+                "Figure 4. Mean weighting ESS and descriptive software timing by SNR and architecture.",
                 sty,
                 "caption",
             ),
@@ -1199,7 +1212,7 @@ def main() -> None:
                 sty,
             ),
             p(
-                "The factorial evidence attributes most log-frequency error variation to SNR, channel complexity, and their interaction. After Holm adjustment, architecture does not show a primary main effect. The amortized score recorded higher timing under the fixed analytical-first order and accepted fewer rejuvenation moves, despite high held-out score correlation; only the acceptance contrast supports an architecture interpretation.",
+                primary_statement + " " + raw_interval_statement + " Timing is descriptive under the fixed analytical-first order. Both methods use the corrected initial observation and the same numerical conditional target.",
                 sty,
             ),
             p(

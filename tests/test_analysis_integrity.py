@@ -12,18 +12,80 @@ import pandas as pd
 from PIL import Image as PillowImage
 from PIL.PngImagePlugin import PngInfo
 from scipy.stats import t as student_t
+from scipy.stats import ttest_1samp
 
 from scripts.analyze_joint_results import holm_adjust, multivariate_within_seed
 from scripts.build_report import _write_png_if_pixels_changed
-from scripts.build_site import SITE_METRICS, simulation_summaries
+from scripts.build_site import SITE_METRICS, simulation_conclusion, simulation_summaries
 from src.signals_project.joint_ssm import (
     canonical_artifact_float,
+    paired_contrasts,
     write_csv_artifact,
     write_text_artifact,
 )
 
 
 class AnalysisIntegrityTests(unittest.TestCase):
+    def test_published_conclusion_recomputes_numbers_and_significance(self) -> None:
+        frame = self.nonsingular_frame()
+        frame["latency_ms_per_sample"] = frame["mse_frequency"] / 100
+        effects = multivariate_within_seed(frame, "mse_frequency", "log")
+        pairs = paired_contrasts(frame, ["mse_frequency"])
+        html = simulation_conclusion(frame, effects, pairs)
+        mean = frame.groupby("architecture")["mse_frequency"].mean()
+        self.assertIn(f'{mean["Analytical joint score"]:.2f} Hz²', html)
+        effects.loc[effects.effect == "Architecture", "p_holm_within_response"] = 0.8
+        self.assertIn("No clear primary architecture effect", simulation_conclusion(frame, effects, pairs))
+        effects.loc[effects.effect == "Architecture", "p_holm_within_response"] = 0.001
+        self.assertIn("Primary architecture effect detected", simulation_conclusion(frame, effects, pairs))
+
+    @staticmethod
+    def nonsingular_frame() -> pd.DataFrame:
+        rng = np.random.default_rng(882)
+        rows = []
+        for seed in range(30):
+            for architecture in ("Analytical joint score", "Amortized joint surrogate"):
+                for snr in (-5.0, 5.0, 15.0):
+                    for channel in ("LOS", "MP", "NLOS"):
+                        rows.append(dict(
+                            seed=seed, architecture=architecture, snr_db=snr,
+                            channel=channel, mse_frequency=20.0 + rng.normal(),
+                        ))
+        return pd.DataFrame(rows)
+
+    def test_hotelling_one_coordinate_matches_paired_seed_t_test(self) -> None:
+        frame = self.nonsingular_frame()
+        output = multivariate_within_seed(frame, "mse_frequency", "raw")
+        blocks = frame.groupby(["seed", "architecture"])["mse_frequency"].mean().unstack()
+        differences = blocks["Amortized joint surrogate"] - blocks["Analytical joint score"]
+        expected = ttest_1samp(differences.to_numpy(), 0.0)
+        effect = output[output.effect == "Architecture"].iloc[0]
+        self.assertAlmostEqual(float(effect.F), float(expected.statistic**2), places=11)
+        self.assertAlmostEqual(float(effect.p_value), float(expected.pvalue), places=11)
+
+    def test_hotelling_inference_is_invariant_to_response_units(self) -> None:
+        frame = self.nonsingular_frame()
+        original = multivariate_within_seed(frame, "mse_frequency", "raw")
+        frame["mse_frequency"] *= 1e-9
+        rescaled = multivariate_within_seed(frame, "mse_frequency", "raw")
+        np.testing.assert_allclose(original.F, rescaled.F, rtol=1e-10, atol=1e-12)
+        np.testing.assert_allclose(original.p_value, rescaled.p_value, rtol=1e-10)
+
+    def test_zero_variance_contrast_cannot_produce_an_ordinary_f_test(self) -> None:
+        frame = self.nonsingular_frame()
+        frame["mse_frequency"] = np.where(
+            frame.architecture == "Analytical joint score", 2.0, 3.0
+        )
+        with self.assertRaisesRegex(ValueError, "positive contrast variance"):
+            multivariate_within_seed(frame, "mse_frequency", "raw")
+
+    def test_rank_deficient_covariance_cannot_produce_an_ordinary_f_test(self) -> None:
+        frame = self.nonsingular_frame()
+        cell = frame.groupby("seed").cumcount().to_numpy()
+        frame["mse_frequency"] = (frame.seed.to_numpy() + 1) * (cell + 1.0)
+        with self.assertRaisesRegex(ValueError, "full-rank contrast covariance"):
+            multivariate_within_seed(frame, "mse_frequency", "raw")
+
     def test_identical_text_artifacts_are_not_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "artifact.txt"

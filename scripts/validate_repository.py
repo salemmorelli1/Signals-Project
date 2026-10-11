@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -12,10 +13,12 @@ import numpy as np
 import pandas as pd
 from pypdf import PdfReader
 
-from scripts.build_site import simulation_summaries
+from scripts.analyze_joint_results import multivariate_within_seed
+from scripts.build_site import simulation_conclusion, simulation_summaries
 from src.signals_project.joint_ssm import (
     ARCHITECTURES,
     FACTORIAL_METRICS,
+    FILTER_PROTOCOL_VERSION,
     paired_contrasts,
     summarize_cells,
     validate_factorial_frame,
@@ -74,6 +77,39 @@ def assert_frame_close(actual: pd.DataFrame, expected: pd.DataFrame, name: str) 
 
 def validate_simulation_artifacts() -> str:
     metadata = read_json(DATA / "joint_experiment_metadata.json")
+    require(
+        metadata.get("filter_protocol_version") == FILTER_PROTOCOL_VERSION,
+        "Simulation evidence does not match the corrected filter protocol",
+    )
+    require(
+        metadata.get("particle_ess_definition") == "importance-weight ESS before resampling",
+        "Simulation ESS must be measured before resampling",
+    )
+    for name in (
+        "joint_factorial_results.csv", "joint_example_trace.csv", "joint_surrogate_weights.npz"
+    ):
+        digest = hashlib.sha256((DATA / name).read_bytes()).hexdigest()
+        require(metadata.get("artifact_sha256", {}).get(name) == digest, f"SHA-256 mismatch: {name}")
+    model_path = "src/signals_project/joint_ssm.py"
+    require(
+        metadata.get("source_files_sha256", {}).get(model_path)
+        == hashlib.sha256((ROOT / model_path).read_bytes()).hexdigest(),
+        "Simulation source hash does not match the tested filter",
+    )
+    archive = DATA / "baseline_v1"
+    archived = read_json(archive / "archive_manifest.json")
+    require(
+        archived.get("source_commit") == "3e2b040c848b32ca3a76e4659ad497780c79d2a3",
+        "Archived baseline source commit mismatch",
+    )
+    archive_hashes = archived.get("artifact_sha256", {})
+    require(len(archive_hashes) == 8, "The original eight baseline artifacts must be retained")
+    for name, digest in archive_hashes.items():
+        require(Path(name).name == name, "Invalid archive artifact path")
+        require(
+            hashlib.sha256((archive / name).read_bytes()).hexdigest() == digest,
+            f"Archived baseline artifact changed: {name}",
+        )
     config = metadata["config"]
     repetitions = int(metadata["repetitions_per_cell"])
     results = pd.read_csv(DATA / "joint_factorial_results.csv")
@@ -164,6 +200,31 @@ def validate_simulation_artifacts() -> str:
     require(effects["p_value"].between(0.0, 1.0).all(), "Raw p-value out of range")
     require(effects["p_holm_within_response"].between(0.0, 1.0).all(), "Holm p-value out of range")
     require(effects["partial_eta_squared"].between(0.0, 1.0).all(), "Effect size out of range")
+    transforms = {
+        "mse_frequency": "log", "phase_circular_rmse": "raw", "channel_nmse": "log",
+        "particle_ess_mean": "raw", "latency_ms_per_sample": "log",
+    }
+    regenerated_effects = pd.concat([
+        multivariate_within_seed(results, metric, transform)
+        for metric, transform in transforms.items()
+    ], ignore_index=True)
+    assert_frame_close(effects, regenerated_effects, "joint_factorial_effects.csv")
+    inference = read_json(DATA / "joint_inference_summary.json")
+    require(
+        inference.get("source_results_sha256")
+        == hashlib.sha256((DATA / "joint_factorial_results.csv").read_bytes()).hexdigest(),
+        "Inference summary source hash mismatch",
+    )
+    assert_frame_close(
+        pd.DataFrame(inference["primary_effects"]),
+        regenerated_effects[regenerated_effects.response == "mse_frequency"],
+        "joint_inference_summary.json primary effects",
+    )
+    assert_frame_close(
+        pd.DataFrame.from_dict(inference["architecture_means"], orient="index").sort_index(),
+        results.groupby("architecture")[list(PAIR_METRICS)].mean().sort_index(),
+        "joint_inference_summary.json architecture means",
+    )
 
     trace = pd.read_csv(DATA / "joint_example_trace.csv")
     require(len(trace) == samples * len(ARCHITECTURES), "Example-trace row count mismatch")
@@ -174,6 +235,15 @@ def validate_simulation_artifacts() -> str:
     require(
         np.isfinite(trace_numeric.to_numpy(dtype=float)).all(),
         "Example trace contains non-finite values",
+    )
+    require(
+        trace["particle_ess"].between(0.0, particles, inclusive="right").all()
+        and trace["particle_ess_post_resampling"].between(0.0, particles, inclusive="right").all(),
+        "Trace weighting/post-resampling ESS out of range",
+    )
+    require(
+        (trace["particle_ess_post_resampling"] >= trace["particle_ess"] - 1e-10).all(),
+        "Post-resampling ESS cannot be below weighting ESS",
     )
     return f"{len(results)} complete paired simulation rows"
 
@@ -215,6 +285,14 @@ def validate_publication() -> str:
     )
     assert_frame_close(published_summaries, expected_summaries, "dashboard seed-block summaries")
     require("rows.map(x=>x.ci)" in html, "Dashboard does not use seed-block intervals")
+    require(
+        simulation_conclusion(
+            pd.read_csv(DATA / "joint_factorial_results.csv"),
+            pd.read_csv(DATA / "joint_factorial_effects.csv"),
+            pd.read_csv(DATA / "joint_paired_effects.csv"),
+        ) in html,
+        "Dashboard headline conclusions are inconsistent with the committed evidence",
+    )
     require(
         "timing contrast is descriptive, not causal" in html.lower(),
         "Dashboard omits the nonrandomized latency limitation",
@@ -281,7 +359,9 @@ def validate_ci_contract() -> str:
         line.strip()
         for line in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
     }
-    for rule in ("*.csv text eol=lf", "*.json text eol=lf", "*.html text eol=lf"):
+    for rule in (
+        "*.csv text eol=lf", "*.json text eol=lf", "*.html text eol=lf", "*.py text eol=lf"
+    ):
         require(rule in attributes, f"Missing cross-platform line-ending rule: {rule}")
     tracked_pickles = subprocess.run(
         ["git", "ls-files", "*.pkl"],

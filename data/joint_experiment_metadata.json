@@ -1,4 +1,5 @@
 {
+  "filter_protocol_version": "joint-ssm-v2",
   "experiment_name": "Signals Project Executed Joint Torus SSM",
   "validation_scope": "Controlled simulation validation; not field, hardware-in-the-loop, or operational SIGINT validation.",
   "design": "2 x 3 x 3 paired full factorial",
@@ -47,6 +48,8 @@
     "logamp_mean": 0.0,
     "logamp_reversion": 0.035,
     "logamp_sd": 0.035,
+    "initial_logamp_sd": 0.18,
+    "initial_channel_sd": 0.12,
     "frequency_rho": 0.82,
     "frequency_sd": 0.42,
     "phase_sd": 0.075,
@@ -58,6 +61,17 @@
     "surrogate_ridge": 0.08,
     "surrogate_train_rows_per_mode": 900,
     "drift_clip": 120.0
+  },
+  "initial_observation_policy": "Weight the configured initial prior at t=0 with zero pre-observation source history; transition-conditioned MALA starts at t=1.",
+  "particle_ess_definition": "importance-weight ESS before resampling",
+  "noise_hyperparameter_scope": "Known, calibrated noise parameters in a controlled simulation; noise-scale estimation from unknown real captures is not validated.",
+  "source_files_sha256": {
+    "src/signals_project/joint_ssm.py": "f989bf4ff4193ba0ce2ac417868e11831914b50856a8c86eb3f3312c5e3d7346"
+  },
+  "artifact_sha256": {
+    "joint_factorial_results.csv": "5d6bd863e9f1f0b487f25b2d61fd11490b72ba6ad7cd31dfc0208a381586720f",
+    "joint_example_trace.csv": "8ce8e93a63ddb2d168c34b4c55463d7852cce6a408d6812ab841cdda6a8a7b91",
+    "joint_surrogate_weights.npz": "fb43bd25c0ca426b1fc9509237c7841f66bf479668abacbf38cf4995c6f4b4f3"
   },
   "surrogate_validation": {
     "validation_score_rmse": 12.83846832818761,

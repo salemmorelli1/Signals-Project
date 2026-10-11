@@ -1,0 +1,21 @@
+{
+  "filter_protocol_version": "joint-ssm-v1",
+  "source_commit": "3e2b040c848b32ca3a76e4659ad497780c79d2a3",
+  "status": "retained historical simulation; superseded by the corrected v2 run",
+  "known_limitations": [
+    "An extra transition preceded the first observation and populated a pre-observation lag.",
+    "Inference initialization dispersions differed from the generator.",
+    "Reported particle ESS was measured after resampling reset.",
+    "Singular effect covariance was epsilon-regularized without the ordinary F assumptions."
+  ],
+  "artifact_sha256": {
+    "joint_cell_summary.csv": "c14782dd2424537e2ba3d102faf02b63da22f6d4a0788ee881a72efa27bbda84",
+    "joint_example_trace.csv": "0ccf0f9e0fdf7700b4b7ae20d91a2bea4325c2c43615b063c30219ddc954bdfd",
+    "joint_experiment_metadata.json": "9cfbe480efb482e986442efb8997fdd4cd42eb4318497f27fce8d52b47938495",
+    "joint_factorial_effects.csv": "091d968954c53961073b34d93f82bc324feb14d4e8dcef3071feb60ba0bc480b",
+    "joint_factorial_results.csv": "bedf56028ad800e6420e60f73b30d4b652367a56709ebd5e6d59dcc918e3968f",
+    "joint_inference_summary.json": "ba9f36269148a670c93b78c5a63bf49b8c924f15f74028dac9a10d5150da4217",
+    "joint_paired_effects.csv": "d5edee41e7c7daadd57cbd382d6366f94125789dce2dbb26c4297c17e9478fca",
+    "joint_surrogate_weights.npz": "1db15b54373447e556a127f0d9dce8d9568cfc7eab53ce2416d7532873fe368e"
+  }
+}
