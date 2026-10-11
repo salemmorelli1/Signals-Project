@@ -40,7 +40,9 @@ The compact distribution is a Python pickle. The adapter refuses to load it
 unless the operator supplies `--trust-official-pickle` and the file matches the
 audited SHA-256
 `f634d90585167437d196c89b7c5a344903180bf4f5a55d02d175b8074e009d9a`.
-The hash comparison occurs before unpickling. Before execution:
+The adapter hashes a private disk-backed byte snapshot, verifies it, and
+unpickles that same snapshot. It does not reopen an unchecked pathname after
+verification. Before execution:
 
 1. obtain the file from the official UCLA page;
 2. retain the expected SHA-256 separately from the downloaded file;

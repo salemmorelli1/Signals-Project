@@ -2,20 +2,22 @@
   "analysis": "Orthonormal-contrast multivariate repeated-measures analysis with trajectory seed as the block",
   "primary_response": "log frequency MSE",
   "multiplicity": "Holm adjustment across the seven primary-response omnibus effects",
+  "covariance_policy": "Full-rank sample covariance required; singular ordinary F tests are rejected",
+  "source_results_sha256": "5d6bd863e9f1f0b487f25b2d61fd11490b72ba6ad7cd31dfc0208a381586720f",
   "architecture_means": {
     "Amortized joint surrogate": {
-      "mse_frequency": 238.411065863,
-      "phase_circular_rmse": 1.37039821076,
-      "channel_nmse": 0.247821128996,
-      "particle_ess_mean": 59.0447734306,
-      "latency_ms_per_sample": 1.58149477483
+      "mse_frequency": 219.207013237,
+      "phase_circular_rmse": 1.3436482601,
+      "channel_nmse": 0.231212287622,
+      "particle_ess_mean": 29.0899016461,
+      "latency_ms_per_sample": 2.84019854846
     },
     "Analytical joint score": {
-      "mse_frequency": 246.756897829,
-      "phase_circular_rmse": 1.37664821952,
-      "channel_nmse": 0.25365805636,
-      "particle_ess_mean": 59.0502783188,
-      "latency_ms_per_sample": 1.50814491428
+      "mse_frequency": 218.427920369,
+      "phase_circular_rmse": 1.34610966321,
+      "channel_nmse": 0.235263735416,
+      "particle_ess_mean": 28.9936125502,
+      "latency_ms_per_sample": 2.69248012561
     }
   },
   "primary_effects": [
@@ -25,9 +27,9 @@
       "effect": "Architecture",
       "df1": 1,
       "df2": 99,
-      "F": 0.783592986635,
-      "p_value": 0.378189514957,
-      "partial_eta_squared": 0.00785292414496,
+      "F": 0.304165462652,
+      "p_value": 0.582525454811,
+      "partial_eta_squared": 0.00306296781444,
       "p_holm_within_response": 1.0
     },
     {
@@ -36,10 +38,10 @@
       "effect": "SNR",
       "df1": 2,
       "df2": 98,
-      "F": 19.0935845981,
-      "p_value": 9.94040932103e-08,
-      "partial_eta_squared": 0.280402107053,
-      "p_holm_within_response": 5.96424559262e-07
+      "F": 28.5869944838,
+      "p_value": 1.65939742484e-10,
+      "partial_eta_squared": 0.368450855379,
+      "p_holm_within_response": 1.16157819739e-09
     },
     {
       "response": "mse_frequency",
@@ -47,10 +49,10 @@
       "effect": "Channel",
       "df1": 2,
       "df2": 98,
-      "F": 21.1497840639,
-      "p_value": 2.3137548077e-08,
-      "partial_eta_squared": 0.301494642444,
-      "p_holm_within_response": 1.61962836539e-07
+      "F": 20.7077277211,
+      "p_value": 3.15386092972e-08,
+      "partial_eta_squared": 0.297065022746,
+      "p_holm_within_response": 1.89231655783e-07
     },
     {
       "response": "mse_frequency",
@@ -58,9 +60,9 @@
       "effect": "Architecture \u00d7 SNR",
       "df1": 2,
       "df2": 98,
-      "F": 0.144610524339,
-      "p_value": 0.865543579841,
-      "partial_eta_squared": 0.00294255103045,
+      "F": 0.00495822336231,
+      "p_value": 0.995054297936,
+      "partial_eta_squared": 0.000101177993862,
       "p_holm_within_response": 1.0
     },
     {
@@ -69,9 +71,9 @@
       "effect": "Architecture \u00d7 Channel",
       "df1": 2,
       "df2": 98,
-      "F": 0.578765014707,
-      "p_value": 0.562494657337,
-      "partial_eta_squared": 0.0116736472668,
+      "F": 0.716003368643,
+      "p_value": 0.491239964755,
+      "partial_eta_squared": 0.0144018690186,
       "p_holm_within_response": 1.0
     },
     {
@@ -80,10 +82,10 @@
       "effect": "SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 7.49583942687,
-      "p_value": 2.68064288973e-05,
-      "partial_eta_squared": 0.237994591136,
-      "p_holm_within_response": 0.000134032144486
+      "F": 4.8714262884,
+      "p_value": 0.00127836764776,
+      "partial_eta_squared": 0.168728286567,
+      "p_holm_within_response": 0.00639183823879
     },
     {
       "response": "mse_frequency",
@@ -91,9 +93,9 @@
       "effect": "Architecture \u00d7 SNR \u00d7 Channel",
       "df1": 4,
       "df2": 96,
-      "F": 0.611176356891,
-      "p_value": 0.655580178476,
-      "partial_eta_squared": 0.0248332850095,
+      "F": 1.03644370619,
+      "p_value": 0.392553687865,
+      "partial_eta_squared": 0.0413974012584,
       "p_holm_within_response": 1.0
     }
   ],

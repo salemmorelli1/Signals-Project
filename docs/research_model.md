@@ -90,6 +90,17 @@ The resample-move filter performs:
 5. one same-target, numerically evaluated MALA rejuvenation step; and
 6. weighted posterior summaries.
 
+For the corrected `joint-ssm-v2` run, the first observation is weighted against
+the configured initial prior, with zero history before sample zero. The filter
+and generator share the initial log-amplitude, frequency, and channel scales.
+Transitions and ancestor-conditioned MALA begin at sample one. Weighting ESS
+is saved before resampling; the trace saves reset ESS separately. The original
+simulation artifacts remain byte-for-byte intact in `data/baseline_v1`.
+
+The simulation assumes known calibrated noise hyperparameters and a known
+channel mode and frequency alphabet. It does not validate estimating those
+quantities from unknown captures.
+
 Particle ESS is an importance-weight diagnostic. It is not MCMC chain ESS, and
 rank-normalized R-hat is not reported for a one-step rejuvenation kernel.
 

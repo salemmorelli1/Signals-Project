@@ -1,0 +1,101 @@
+{
+  "analysis": "Orthonormal-contrast multivariate repeated-measures analysis with trajectory seed as the block",
+  "primary_response": "log frequency MSE",
+  "multiplicity": "Holm adjustment across the seven primary-response omnibus effects",
+  "architecture_means": {
+    "Amortized joint surrogate": {
+      "mse_frequency": 238.411065863,
+      "phase_circular_rmse": 1.37039821076,
+      "channel_nmse": 0.247821128996,
+      "particle_ess_mean": 59.0447734306,
+      "latency_ms_per_sample": 1.58149477483
+    },
+    "Analytical joint score": {
+      "mse_frequency": 246.756897829,
+      "phase_circular_rmse": 1.37664821952,
+      "channel_nmse": 0.25365805636,
+      "particle_ess_mean": 59.0502783188,
+      "latency_ms_per_sample": 1.50814491428
+    }
+  },
+  "primary_effects": [
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "Architecture",
+      "df1": 1,
+      "df2": 99,
+      "F": 0.783592986635,
+      "p_value": 0.378189514957,
+      "partial_eta_squared": 0.00785292414496,
+      "p_holm_within_response": 1.0
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "SNR",
+      "df1": 2,
+      "df2": 98,
+      "F": 19.0935845981,
+      "p_value": 9.94040932103e-08,
+      "partial_eta_squared": 0.280402107053,
+      "p_holm_within_response": 5.96424559262e-07
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "Channel",
+      "df1": 2,
+      "df2": 98,
+      "F": 21.1497840639,
+      "p_value": 2.3137548077e-08,
+      "partial_eta_squared": 0.301494642444,
+      "p_holm_within_response": 1.61962836539e-07
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "Architecture \u00d7 SNR",
+      "df1": 2,
+      "df2": 98,
+      "F": 0.144610524339,
+      "p_value": 0.865543579841,
+      "partial_eta_squared": 0.00294255103045,
+      "p_holm_within_response": 1.0
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "Architecture \u00d7 Channel",
+      "df1": 2,
+      "df2": 98,
+      "F": 0.578765014707,
+      "p_value": 0.562494657337,
+      "partial_eta_squared": 0.0116736472668,
+      "p_holm_within_response": 1.0
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "SNR \u00d7 Channel",
+      "df1": 4,
+      "df2": 96,
+      "F": 7.49583942687,
+      "p_value": 2.68064288973e-05,
+      "partial_eta_squared": 0.237994591136,
+      "p_holm_within_response": 0.000134032144486
+    },
+    {
+      "response": "mse_frequency",
+      "transform": "log",
+      "effect": "Architecture \u00d7 SNR \u00d7 Channel",
+      "df1": 4,
+      "df2": 96,
+      "F": 0.611176356891,
+      "p_value": 0.655580178476,
+      "partial_eta_squared": 0.0248332850095,
+      "p_holm_within_response": 1.0
+    }
+  ],
+  "warning": "This is simulation evidence and is not field or operational SIGINT validation."
+}

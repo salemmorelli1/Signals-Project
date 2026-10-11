@@ -8,8 +8,10 @@ lanes:
    non-equalized WiSig receiver recordings are paired into controlled digital
    overlaps with exact component truth, receiver/day leakage controls, and
    deterministic manifests.
-2. **Executed joint-SSM simulation baseline.** The existing 2 × 3 × 3 paired
-   factorial benchmark remains frozen and fully reproducible.
+2. **Executed joint-SSM simulation.** The corrected `joint-ssm-v2` run uses
+   the same 2 × 3 × 3 paired design and physical trajectories. The original
+   eight baseline artifacts remain unchanged in `data/baseline_v1`, with a
+   checksum manifest and their original source commit.
 
 The WiSig path uses the public
 [`WiSig-dataset/wisig-examples`](https://github.com/WiSig-dataset/wisig-examples)
@@ -22,7 +24,7 @@ be downloaded separately from the
 
 | Lane | Data source | Status | Defensible statement |
 |---|---|---:|---|
-| Joint torus SSM baseline | Simulated I/Q | Complete | Executed and numerically verified in simulation |
+| Corrected joint torus SSM v2 | Simulated I/Q | Complete; 1,800 runs | Executed and numerically verified in simulation |
 | WiSig ingestion and overlap construction | Public hardware-captured I/Q | Executed; 3,200 overlaps prepared | Provenance-checked external-evaluation input |
 | WiSig model results | Public hardware-captured I/Q | Not yet executed | No performance claim until artifacts are produced |
 | Simultaneous RF / hardware-in-the-loop | New controlled capture | Not included | No operational SIGINT claim |
@@ -62,6 +64,8 @@ PYTHONPATH=. python -m src.signals_project.wisig_realdata \
 The acknowledgement flag exists because Python pickle files can execute code
 when loaded. The adapter verifies the audited ManyRx SHA-256 above before
 unpickling; both the explicit acknowledgement and matching digest are required.
+The adapter hashes a private disk-backed snapshot and unpickles those same
+verified bytes, so replacing the original pathname cannot bypass verification.
 Use the flag only for the official UCLA file. The raw dataset and derived I/Q
 are ignored by Git; only compact aggregate results and provenance metadata
 should later be committed.
@@ -75,6 +79,8 @@ The command creates:
 Default construction uses non-equalized I/Q (`equalized=0`) and 25 mixtures per
 receiver/day domain, so the working subset is small compared with the original
 download. Increase the cap only for the locked confirmatory run.
+Before materialization, manifest indices, acquisition labels, unique mixture
+identifiers, and receiver/day holdout boundaries are revalidated.
 
 ## Leakage-safe split
 
@@ -88,17 +94,29 @@ until preprocessing, tuning, and model selection are frozen.
 
 ## Executed simulation baseline
 
-The frozen baseline carries amplitude, frequency, hop state, phase on
+The corrected simulation carries amplitude, frequency, hop state, phase on
 \(\mathbb T^2\), latent complex tapped-delay channels, and delayed source
-history. It compares an analytical score with an amortized SiLU score under an
+history. It compares an analytical score with an amortized SiLU score under a
 Metropolis correction against the same configured numerical target and a
 Gaussian–truncated-Cauchy convolution likelihood evaluated by fixed quadrature.
 
+The first observation weights the generator's initial prior without adding a
+transition or a pre-observation source lag. Transition-conditioned MALA begins
+at the second observation. Reported particle ESS is measured after likelihood
+weighting and before resampling; the trace also stores the reset ESS separately.
+
 Across 900 paired simulated trajectories per architecture, mean frequency MSE
-was 246.76 Hz² for the analytical score and 238.41 Hz² for the surrogate. After
-averaging the repeated conditions within each of 100 independent seed profiles,
-the raw paired difference was −8.35 Hz², 95% <i>t</i> CI [−24.94, 8.25]. These
-are simulation results and are not presented as WiSig results.
+was 218.43 Hz² for the analytical score and 219.21 Hz² for the surrogate. After
+averaging repeated conditions within each of 100 independent seed profiles,
+the raw paired difference was +0.78 Hz², 95% <i>t</i> CI [−14.23, 15.79]. The
+primary log-MSE architecture test has Holm-adjusted p = 1.0. These results do
+not establish an architecture advantage and are not WiSig model results.
+
+Ordinary Hotelling F tests require full-rank sample covariance. The analyzer
+rejects singular contrasts instead of adding epsilon and reporting a
+pseudoinverse-based F test. The repository validator recomputes every effect,
+paired interval, and published conclusion from the row-level data and checks
+the result, trace, model-source, surrogate, and archived-baseline hashes.
 
 The committed timing endpoint is descriptive software timing. Every physical
 condition ran the analytical method before the surrogate, so the latency
@@ -108,15 +126,20 @@ contrast is not a randomized or causal architecture benchmark.
 
 ```bash
 PYTHONPATH=. python -m pytest -q
-PYTHONPATH=. python scripts/validate_repository.py
-
-# Optional: rerun the frozen simulation factorial
-PYTHONPATH=. python -m src.signals_project.joint_ssm \
-  --output data --repetitions 100 --particles 64 --samples 60
 PYTHONPATH=. python scripts/analyze_joint_results.py
-
 PYTHONPATH=. python scripts/build_site.py
 PYTHONPATH=. python scripts/build_report.py
+PYTHONPATH=. python scripts/validate_repository.py
+git diff --exit-code
+```
+
+Run an optional new complete experiment outside the repository to retain the
+reviewed evidence. Host-dependent raw timing will differ; this command does
+not replace the committed results used by the publication builders.
+
+```bash
+PYTHONPATH=. python -m src.signals_project.joint_ssm \
+  --output ../Signals-Project-replay-v2 --repetitions 100 --particles 64 --samples 60
 ```
 
 Derived CSV and JSON statistics are serialized to 12 significant digits with
@@ -138,6 +161,7 @@ pixel change still updates the figure and fails the clean-rebuild gate.
   <https://salemmorelli1.github.io/Signals-Project/report/Signals_Project_APA_Report.pdf>
 - WiSig real-data protocol: `docs/WISIG_REAL_DATA_PROTOCOL.md`
 - Validation ladder: `docs/OPERATIONAL_VALIDATION_PROTOCOL.md`
+- Corrected filter and evidence audit: `docs/FILTER_EVIDENCE_AUDIT_2026-10-11.md`
 
 ## Repository map
 

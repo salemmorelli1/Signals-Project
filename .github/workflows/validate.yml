@@ -10,7 +10,14 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     env:
       PYTHONPATH: .
     steps:
@@ -28,7 +35,7 @@ jobs:
       - run: python -m compileall -q src scripts tests
       - run: >-
           python -m src.signals_project.joint_ssm
-          --output /tmp/signals-smoke
+          --output "$RUNNER_TEMP/signals-smoke"
           --repetitions 2
           --particles 24
           --samples 24

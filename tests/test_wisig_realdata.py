@@ -10,6 +10,7 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -50,6 +51,97 @@ def fixture_dataset() -> dict:
 
 
 class WiSigAdapterTests(unittest.TestCase):
+    def test_invalid_power_cannot_replace_a_prior_preparation(self) -> None:
+        for tx in self.dataset["data"]:
+            for rx in tx:
+                for day in rx:
+                    day[0][:] = 0.0
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.pkl"
+            path.write_bytes(pickle.dumps(self.dataset, protocol=pickle.HIGHEST_PROTOCOL))
+            output = Path(tmp) / "derived"
+            output.mkdir()
+            names = ("wisig_overlap_manifest.csv", "wisig_digital_overlaps.npz", "wisig_preparation_metadata.json")
+            for name in names:
+                (output / name).write_bytes(b"previous verified preparation")
+            with self.assertRaisesRegex(ValueError, "Invalid signal power"):
+                prepare_dataset(
+                    path, output, mixtures_per_domain=1, trust_official_pickle=True,
+                    expected_sha256=sha256_file(path),
+                )
+            for name in names:
+                self.assertEqual((output / name).read_bytes(), b"previous verified preparation")
+
+    def test_manifest_only_cannot_pair_new_metadata_with_an_old_overlap_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.pkl"
+            path.write_bytes(pickle.dumps(self.dataset, protocol=pickle.HIGHEST_PROTOCOL))
+            output = Path(tmp) / "derived"
+            output.mkdir()
+            (output / "wisig_digital_overlaps.npz").write_bytes(b"previous archive")
+            with self.assertRaisesRegex(ValueError, "existing overlap archive"):
+                prepare_dataset(
+                    path, output, mixtures_per_domain=1, materialize=False,
+                    trust_official_pickle=True, expected_sha256=sha256_file(path),
+                )
+            self.assertFalse((output / "wisig_overlap_manifest.csv").exists())
+
+    def test_recording_indices_cannot_wrap_or_truncate(self) -> None:
+        for value in (-1, 0.5, True, "-1", 99999):
+            with self.subTest(value=value):
+                manifest = build_overlap_manifest(self.dataset, mixtures_per_domain=1, seed=7)
+                manifest[0]["signal_a_index"] = value
+                with self.assertRaisesRegex(ValueError, "recording"):
+                    materialize_overlaps(self.dataset, manifest)
+
+    def test_manifest_rejects_lineage_and_split_tampering(self) -> None:
+        for field, value in (("tx_a", "wrong-tx"), ("receiver", "wrong-rx"), ("split", "unknown")):
+            with self.subTest(field=field):
+                manifest = build_overlap_manifest(self.dataset, mixtures_per_domain=1, seed=7)
+                manifest[0][field] = value
+                with self.assertRaises(ValueError):
+                    materialize_overlaps(self.dataset, manifest)
+        manifest = build_overlap_manifest(self.dataset, mixtures_per_domain=1, seed=7)
+        manifest[1]["mixture_id"] = manifest[0]["mixture_id"]
+        with self.assertRaisesRegex(ValueError, "unique"):
+            materialize_overlaps(self.dataset, manifest)
+
+    def test_materialization_enforces_receiver_and_day_holdouts(self) -> None:
+        for split, replacement, error in (
+            ("test", "train", "Test receivers"),
+            ("validation", "train", "Validation capture days"),
+        ):
+            with self.subTest(split=split):
+                manifest = build_overlap_manifest(self.dataset, mixtures_per_domain=1, seed=7)
+                next(row for row in manifest if row["split"] == split)["split"] = replacement
+                with self.assertRaisesRegex(ValueError, error):
+                    materialize_overlaps(self.dataset, manifest)
+
+    def test_duplicate_acquisition_labels_are_rejected(self) -> None:
+        self.dataset["rx_list"][1] = self.dataset["rx_list"][0]
+        with self.assertRaisesRegex(ValueError, "unique acquisition identifiers"):
+            validate_compact_dataset(self.dataset)
+
+    def test_pickle_parser_uses_the_verified_snapshot_after_path_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.pkl"
+            path.write_bytes(pickle.dumps(self.dataset, protocol=pickle.HIGHEST_PROTOCOL))
+            digest = sha256_file(path)
+
+            def replace_after_verification(actual, expected):
+                self.assertEqual(actual, expected)
+                path.write_bytes(pickle.dumps({"unverified": True}))
+                return True
+
+            with patch(
+                "src.signals_project.wisig_realdata.hmac.compare_digest",
+                side_effect=replace_after_verification,
+            ):
+                loaded = load_compact_dataset(
+                    path, trust_official_pickle=True, expected_sha256=digest
+                )
+            self.assertEqual(loaded["tx_list"], self.dataset["tx_list"])
+
     def setUp(self) -> None:
         self.dataset = fixture_dataset()
 
